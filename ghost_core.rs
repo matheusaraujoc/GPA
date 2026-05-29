@@ -347,25 +347,27 @@ impl LZ77 {
         self.head[hv] = p as i16;
     }
 
-    pub fn parse(&mut self, raw: &[u8]) -> Vec<Token> {
+    /// Versao STREAMING do parser: em vez de materializar um Vec<Token>, emite cada
+    /// token via callback. Permite que o compressor codifique token-a-token sem nunca
+    /// guardar o stream inteiro em memoria (RAM ~constante em qualquer tamanho).
+    pub fn parse_streaming<F: FnMut(Token)>(&mut self, raw: &[u8], mut emit: F) {
         let n = raw.len();
-        let mut tokens = Vec::new();
 
         if n < LZ_MIN_MATCH + 2 {
             for &b in raw {
-                tokens.push(Token::Nibble((b >> 4) & 0x0F));
-                tokens.push(Token::Nibble(b & 0x0F));
+                emit(Token::Nibble((b >> 4) & 0x0F));
+                emit(Token::Nibble(b & 0x0F));
             }
-            tokens.push(Token::EOF);
-            return tokens;
+            emit(Token::EOF);
+            return;
         }
 
         let mut i = 0;
         while i < n {
             if i + LZ_MIN_MATCH > n {
                 for k in i..n {
-                    tokens.push(Token::Nibble((raw[k] >> 4) & 0x0F));
-                    tokens.push(Token::Nibble(raw[k] & 0x0F));
+                    emit(Token::Nibble((raw[k] >> 4) & 0x0F));
+                    emit(Token::Nibble(raw[k] & 0x0F));
                 }
                 break;
             }
@@ -379,28 +381,27 @@ impl LZ77 {
                     let (next_len, _) = self.find_match(raw, i + 1, n);
                     if next_len > cur_len {
                         let b = raw[i];
-                        tokens.push(Token::Nibble((b >> 4) & 0x0F));
-                        tokens.push(Token::Nibble(b & 0x0F));
+                        emit(Token::Nibble((b >> 4) & 0x0F));
+                        emit(Token::Nibble(b & 0x0F));
                         i += 1;
                         continue;
                     }
                 }
 
-                tokens.push(Token::Match { dist: cur_dist as u16, len: cur_len as u8 });
+                emit(Token::Match { dist: cur_dist as u16, len: cur_len as u8 });
                 for j in 1..cur_len {
                     self.insert_hash(raw, i + j, n);
                 }
                 i += cur_len;
             } else {
                 let b = raw[i];
-                tokens.push(Token::Nibble((b >> 4) & 0x0F));
-                tokens.push(Token::Nibble(b & 0x0F));
+                emit(Token::Nibble((b >> 4) & 0x0F));
+                emit(Token::Nibble(b & 0x0F));
                 i += 1;
             }
         }
 
-        tokens.push(Token::EOF);
-        tokens
+        emit(Token::EOF);
     }
 }
 
@@ -465,11 +466,9 @@ impl GhostPredictEngine {
         }
     }
 
-    pub fn compress(&mut self, token_stream: &[Token]) -> Vec<u8> {
-        let mut writer = BitWriter::new();
-        let mut coder = ArithmeticCoder::new();
-
-        for &token in token_stream {
+    /// Codifica UM token no stream aritmetico (usado pelos caminhos streaming e batch).
+    pub fn encode_token(&mut self, token: Token, coder: &mut ArithmeticCoder, writer: &mut BitWriter) {
+        {
             let symbol = match token {
                 Token::Nibble(n) => n as usize,
                 Token::EOF => EOF_SYMBOL,
@@ -481,15 +480,15 @@ impl GhostPredictEngine {
             let edge_x = edges[symbol];
 
             if t == 0 {
-                coder.encode(self.o0_cum[symbol], self.o0_cum[symbol + 1], self.o0_cum[ALPHABET_SIZE], &mut writer);
+                coder.encode(self.o0_cum[symbol], self.o0_cum[symbol + 1], self.o0_cum[ALPHABET_SIZE], writer);
             } else if edge_x > 0 {
                 let adjusted = t + 1; // PPMA: escape weight = 1
                 let ecum = &self.graph_cum[self.current_node];
-                coder.encode(ecum[symbol], ecum[symbol + 1], adjusted, &mut writer);
+                coder.encode(ecum[symbol], ecum[symbol + 1], adjusted, writer);
             } else {
                 let adjusted = t + 1;
                 // Encode escape at [T, T+1)
-                coder.encode(t, t + 1, adjusted, &mut writer);
+                coder.encode(t, t + 1, adjusted, writer);
 
                 // Exclussão PPM
                 let mut masked_total = self.o0_cum[ALPHABET_SIZE];
@@ -504,7 +503,7 @@ impl GhostPredictEngine {
                     }
                 }
                 let masked_high = masked_low + self.o0_counts[symbol];
-                coder.encode(masked_low, masked_high, masked_total, &mut writer);
+                coder.encode(masked_low, masked_high, masked_total, writer);
             }
 
             // Aprendizado e Reescalonamento para o nó do grafo
@@ -561,7 +560,7 @@ impl GhostPredictEngine {
                     3 + bucket_dist(dist)
                 };
 
-                coder.encode(self.dist_code_cum[dist_code], self.dist_code_cum[dist_code + 1], self.dist_code_cum[DIST_CODE_SIZE], &mut writer);
+                coder.encode(self.dist_code_cum[dist_code], self.dist_code_cum[dist_code + 1], self.dist_code_cum[DIST_CODE_SIZE], writer);
                 
                 self.dist_code_counts[dist_code] += 1;
                 if self.dist_code_counts.iter().sum::<u32>() >= 2048 {
@@ -581,7 +580,7 @@ impl GhostPredictEngine {
                     let extra_bits = DIST_EXTRA[db];
                     let extra = dist - DIST_BASE[db];
                     for b in (0..extra_bits).rev() {
-                        coder.encode_bit(((extra >> b) & 1) as u32, &mut writer);
+                        coder.encode_bit(((extra >> b) & 1) as u32, writer);
                     }
                 }
                 mtf_offsets(&mut self.last_offsets, dist);
@@ -593,7 +592,7 @@ impl GhostPredictEngine {
                     1 + bucket_len(len)
                 };
 
-                coder.encode(self.len_code_cum[len_code], self.len_code_cum[len_code + 1], self.len_code_cum[LEN_CODE_SIZE], &mut writer);
+                coder.encode(self.len_code_cum[len_code], self.len_code_cum[len_code + 1], self.len_code_cum[LEN_CODE_SIZE], writer);
                 
                 self.len_code_counts[len_code] += 1;
                 if self.len_code_counts.iter().sum::<u32>() >= 2048 {
@@ -613,7 +612,7 @@ impl GhostPredictEngine {
                     let extra_bits = LEN_EXTRA[lb];
                     let extra = len - LEN_BASE[lb];
                     for b in (0..extra_bits).rev() {
-                        coder.encode_bit(((extra >> b) & 1) as u32, &mut writer);
+                        coder.encode_bit(((extra >> b) & 1) as u32, writer);
                     }
                 }
                 self.last_length = len;
@@ -621,220 +620,237 @@ impl GhostPredictEngine {
                 self.current_node = ((self.current_node & 0x0F) << 4) | symbol;
             }
         }
-
-        coder.finish(&mut writer);
-        writer.bytes
     }
 
-    pub fn decompress(&mut self, payload: Vec<u8>) -> Vec<Token> {
+    /// Caminho STREAMING: parsing LZ + codificacao token-a-token, sem materializar
+    /// o Vec<Token>. Inclui flag de modo (1 bit) e fallback STORED (nunca infla > +1 B).
+    pub fn compress_stream(&mut self, raw: &[u8]) -> Vec<u8> {
+        let mut writer = BitWriter::new();
+        writer.write_bit(0); // flag=0 => fluxo comprimido
+        let mut coder = ArithmeticCoder::new();
+        let mut lz = LZ77::new();
+        lz.parse_streaming(raw, |tok| self.encode_token(tok, &mut coder, &mut writer));
+        coder.finish(&mut writer);
+        let compressed = writer.bytes;
+
+        // Fallback STORED: 1o byte = 0x80 (bit de topo = flag 1), seguido dos bytes crus.
+        // Garante inflacao maxima de +1 byte mesmo em dados incompressiveis.
+        if compressed.len() <= raw.len() + 1 {
+            compressed
+        } else {
+            let mut stored = Vec::with_capacity(raw.len() + 1);
+            stored.push(0x80);
+            stored.extend_from_slice(raw);
+            stored
+        }
+    }
+
+    /// Decodifica UM simbolo principal (PPM) + atualiza modelos. Compartilhado pelos
+    /// caminhos batch e streaming. NAO atualiza current_node (cabe ao chamador).
+    fn decode_symbol(&mut self, decoder: &mut ArithmeticDecoder, reader: &mut BitReader) -> usize {
+        let edges = &self.graph[self.current_node];
+        let t = self.graph_totals[self.current_node];
+        let symbol: usize;
+
+        if t == 0 {
+            let total = self.o0_cum[ALPHABET_SIZE];
+            let target = decoder.get_target(total);
+            symbol = match self.o0_cum.binary_search(&target) {
+                Ok(idx) => idx,
+                Err(idx) => idx - 1,
+            };
+            decoder.decode(self.o0_cum[symbol], self.o0_cum[symbol + 1], total, reader);
+        } else {
+            let adjusted = t + 1;
+            let target = decoder.get_target(adjusted);
+
+            if target == t {
+                decoder.decode(t, adjusted, adjusted, reader);
+                let mut masked_total = self.o0_cum[ALPHABET_SIZE];
+                for j in 0..ALPHABET_SIZE {
+                    if edges[j] > 0 {
+                        masked_total -= self.o0_counts[j];
+                    }
+                }
+                let target_m = decoder.get_target(masked_total);
+                let mut acc = 0;
+                let mut sym_idx = 0;
+                let mut low_s = 0;
+                let mut high_s = 0;
+                for s in 0..ALPHABET_SIZE {
+                    if edges[s] > 0 {
+                        continue;
+                    }
+                    let w = self.o0_counts[s];
+                    if acc + w > target_m {
+                        sym_idx = s;
+                        low_s = acc;
+                        high_s = acc + w;
+                        break;
+                    }
+                    acc += w;
+                }
+                decoder.decode(low_s, high_s, masked_total, reader);
+                symbol = sym_idx;
+            } else {
+                let ecum = &self.graph_cum[self.current_node];
+                symbol = match ecum.binary_search(&target) {
+                    Ok(idx) => idx,
+                    Err(idx) => idx - 1,
+                };
+                decoder.decode(ecum[symbol], ecum[symbol + 1], adjusted, reader);
+            }
+        }
+
+        // Aprendizado e Reescalonamento para o nó do grafo
+        let edge_x = edges[symbol];
+        self.graph[self.current_node][symbol] = edge_x + 1;
+        self.graph_totals[self.current_node] = t + 1;
+
+        if self.graph_totals[self.current_node] >= 2048 {
+            let mut sum_ctx = 0;
+            for s in 0..ALPHABET_SIZE {
+                if self.graph[self.current_node][s] > 0 {
+                    self.graph[self.current_node][s] = (self.graph[self.current_node][s] >> 1) | 1;
+                    sum_ctx += self.graph[self.current_node][s];
+                }
+            }
+            self.graph_totals[self.current_node] = sum_ctx;
+        }
+
+        let mut acc = 0;
+        self.graph_cum[self.current_node][0] = 0;
+        for k in 0..ALPHABET_SIZE {
+            acc += self.graph[self.current_node][k];
+            self.graph_cum[self.current_node][k + 1] = acc;
+        }
+
+        // Aprendizado Ordem-0
+        self.o0_counts[symbol] += 1;
+        if self.o0_counts.iter().sum::<u32>() >= 2048 {
+            for s in 0..ALPHABET_SIZE {
+                self.o0_counts[s] = (self.o0_counts[s] >> 1) | 1;
+            }
+        }
+        let mut acc_o0 = 0;
+        self.o0_cum[0] = 0;
+        for k in 0..ALPHABET_SIZE {
+            acc_o0 += self.o0_counts[k];
+            self.o0_cum[k + 1] = acc_o0;
+        }
+
+        symbol
+    }
+
+    /// Decodifica dist + len de um MATCH (modelos auxiliares Dist/Len).
+    fn decode_match(&mut self, decoder: &mut ArithmeticDecoder, reader: &mut BitReader) -> (usize, usize) {
+        let d_target = decoder.get_target(self.dist_code_cum[DIST_CODE_SIZE]);
+        let dist_code = match self.dist_code_cum.binary_search(&d_target) {
+            Ok(idx) => idx,
+            Err(idx) => idx - 1,
+        };
+        decoder.decode(self.dist_code_cum[dist_code], self.dist_code_cum[dist_code + 1], self.dist_code_cum[DIST_CODE_SIZE], reader);
+
+        self.dist_code_counts[dist_code] += 1;
+        if self.dist_code_counts.iter().sum::<u32>() >= 2048 {
+            for s in 0..DIST_CODE_SIZE {
+                self.dist_code_counts[s] = (self.dist_code_counts[s] >> 1) | 1;
+            }
+        }
+        let mut acc_dist = 0;
+        self.dist_code_cum[0] = 0;
+        for k in 0..DIST_CODE_SIZE {
+            acc_dist += self.dist_code_counts[k];
+            self.dist_code_cum[k + 1] = acc_dist;
+        }
+
+        let dist = if dist_code < 3 {
+            self.last_offsets[dist_code]
+        } else {
+            let db = dist_code - 3;
+            let extra_bits = DIST_EXTRA[db];
+            let mut extra = 0;
+            for _ in 0..extra_bits {
+                extra = (extra << 1) | decoder.decode_bit(reader) as usize;
+            }
+            DIST_BASE[db] + extra
+        };
+        mtf_offsets(&mut self.last_offsets, dist);
+
+        let l_target = decoder.get_target(self.len_code_cum[LEN_CODE_SIZE]);
+        let len_code = match self.len_code_cum.binary_search(&l_target) {
+            Ok(idx) => idx,
+            Err(idx) => idx - 1,
+        };
+        decoder.decode(self.len_code_cum[len_code], self.len_code_cum[len_code + 1], self.len_code_cum[LEN_CODE_SIZE], reader);
+
+        self.len_code_counts[len_code] += 1;
+        if self.len_code_counts.iter().sum::<u32>() >= 2048 {
+            for s in 0..LEN_CODE_SIZE {
+                self.len_code_counts[s] = (self.len_code_counts[s] >> 1) | 1;
+            }
+        }
+        let mut acc_len = 0;
+        self.len_code_cum[0] = 0;
+        for k in 0..LEN_CODE_SIZE {
+            acc_len += self.len_code_counts[k];
+            self.len_code_cum[k + 1] = acc_len;
+        }
+
+        let len = if len_code == 0 {
+            self.last_length
+        } else {
+            let lb = len_code - 1;
+            let extra_bits = LEN_EXTRA[lb];
+            let mut extra = 0;
+            for _ in 0..extra_bits {
+                extra = (extra << 1) | decoder.decode_bit(reader) as usize;
+            }
+            LEN_BASE[lb] + extra
+        };
+        self.last_length = len;
+        (dist, len)
+    }
+
+    /// Caminho STREAMING: le a flag de modo (1 bit), trata STORED, e reconstroi o
+    /// fluxo LZ77 INLINE (sem materializar Vec<Token>). RAM ~constante no descompressor.
+    pub fn decompress_stream(&mut self, payload: Vec<u8>) -> Vec<u8> {
+        if payload.is_empty() {
+            return Vec::new();
+        }
+        // flag = bit de topo do primeiro byte (BitWriter/BitReader sao MSB-first)
+        if (payload[0] >> 7) & 1 == 1 {
+            return payload[1..].to_vec(); // modo STORED: bytes crus
+        }
+
         let mut reader = BitReader::new(payload);
+        let _ = reader.read_bit(); // consome a flag (=0)
         let mut decoder = ArithmeticDecoder::new(&mut reader);
-        let mut tokens = Vec::new();
+        let mut out: Vec<u8> = Vec::new();
+        let mut nibble_hi: Option<u8> = None;
 
         loop {
-            let edges = &self.graph[self.current_node];
-            let t = self.graph_totals[self.current_node];
-            let symbol: usize;
-
-            if t == 0 {
-                let total = self.o0_cum[ALPHABET_SIZE];
-                let target = decoder.get_target(total);
-                // Busca binária rápida
-                symbol = match self.o0_cum.binary_search(&target) {
-                    Ok(idx) => idx,
-                    Err(idx) => idx - 1,
-                };
-                decoder.decode(self.o0_cum[symbol], self.o0_cum[symbol + 1], total, &mut reader);
-            } else {
-                let adjusted = t + 1;
-                let target = decoder.get_target(adjusted);
-
-                if target == t {
-                    decoder.decode(t, adjusted, adjusted, &mut reader);
-                    // Exclusão PPM
-                    let mut masked_total = self.o0_cum[ALPHABET_SIZE];
-                    for j in 0..ALPHABET_SIZE {
-                        if edges[j] > 0 {
-                            masked_total -= self.o0_counts[j];
-                        }
-                    }
-                    let target_m = decoder.get_target(masked_total);
-                    let mut acc = 0;
-                    let mut sym_idx = 0;
-                    let mut low_s = 0;
-                    let mut high_s = 0;
-                    for s in 0..ALPHABET_SIZE {
-                        if edges[s] > 0 {
-                            continue;
-                        }
-                        let w = self.o0_counts[s];
-                        if acc + w > target_m {
-                            sym_idx = s;
-                            low_s = acc;
-                            high_s = acc + w;
-                            break;
-                        }
-                        acc += w;
-                    }
-                    decoder.decode(low_s, high_s, masked_total, &mut reader);
-                    symbol = sym_idx;
-                } else {
-                    let ecum = &self.graph_cum[self.current_node];
-                    symbol = match ecum.binary_search(&target) {
-                        Ok(idx) => idx,
-                        Err(idx) => idx - 1,
-                    };
-                    decoder.decode(ecum[symbol], ecum[symbol + 1], adjusted, &mut reader);
-                }
-            }
-
-            // Aprendizado e Reescalonamento para o nó do grafo
-            let edge_x = edges[symbol];
-            self.graph[self.current_node][symbol] = edge_x + 1;
-            self.graph_totals[self.current_node] = t + 1;
-
-            if self.graph_totals[self.current_node] >= 2048 {
-                let mut sum_ctx = 0;
-                for s in 0..ALPHABET_SIZE {
-                    if self.graph[self.current_node][s] > 0 {
-                        self.graph[self.current_node][s] = (self.graph[self.current_node][s] >> 1) | 1;
-                        sum_ctx += self.graph[self.current_node][s];
-                    }
-                }
-                self.graph_totals[self.current_node] = sum_ctx;
-            }
-
-            let mut acc = 0;
-            self.graph_cum[self.current_node][0] = 0;
-            for k in 0..ALPHABET_SIZE {
-                acc += self.graph[self.current_node][k];
-                self.graph_cum[self.current_node][k + 1] = acc;
-            }
-
-            // Aprendizado Ordem-0
-            self.o0_counts[symbol] += 1;
-            if self.o0_counts.iter().sum::<u32>() >= 2048 {
-                for s in 0..ALPHABET_SIZE {
-                    self.o0_counts[s] = (self.o0_counts[s] >> 1) | 1;
-                }
-            }
-            let mut acc_o0 = 0;
-            self.o0_cum[0] = 0;
-            for k in 0..ALPHABET_SIZE {
-                acc_o0 += self.o0_counts[k];
-                self.o0_cum[k + 1] = acc_o0;
-            }
-
+            let symbol = self.decode_symbol(&mut decoder, &mut reader);
             if symbol == EOF_SYMBOL {
-                tokens.push(Token::EOF);
                 break;
             }
-
             if symbol == MATCH_SYMBOL {
-                // Decodifica distância
-                let d_target = decoder.get_target(self.dist_code_cum[DIST_CODE_SIZE]);
-                let dist_code = match self.dist_code_cum.binary_search(&d_target) {
-                    Ok(idx) => idx,
-                    Err(idx) => idx - 1,
-                };
-                decoder.decode(self.dist_code_cum[dist_code], self.dist_code_cum[dist_code + 1], self.dist_code_cum[DIST_CODE_SIZE], &mut reader);
-
-                self.dist_code_counts[dist_code] += 1;
-                if self.dist_code_counts.iter().sum::<u32>() >= 2048 {
-                    for s in 0..DIST_CODE_SIZE {
-                        self.dist_code_counts[s] = (self.dist_code_counts[s] >> 1) | 1;
-                    }
+                let (dist, len) = self.decode_match(&mut decoder, &mut reader);
+                let start = out.len() - dist;
+                for k in 0..len {
+                    out.push(out[start + k]);
                 }
-                let mut acc_dist = 0;
-                self.dist_code_cum[0] = 0;
-                for k in 0..DIST_CODE_SIZE {
-                    acc_dist += self.dist_code_counts[k];
-                    self.dist_code_cum[k + 1] = acc_dist;
-                }
-
-                let dist = if dist_code < 3 {
-                    self.last_offsets[dist_code]
-                } else {
-                    let db = dist_code - 3;
-                    let extra_bits = DIST_EXTRA[db];
-                    let mut extra = 0;
-                    for _ in 0..extra_bits {
-                        extra = (extra << 1) | decoder.decode_bit(&mut reader) as usize;
-                    }
-                    DIST_BASE[db] + extra
-                };
-                mtf_offsets(&mut self.last_offsets, dist);
-
-                // Decodifica comprimento
-                let l_target = decoder.get_target(self.len_code_cum[LEN_CODE_SIZE]);
-                let len_code = match self.len_code_cum.binary_search(&l_target) {
-                    Ok(idx) => idx,
-                    Err(idx) => idx - 1,
-                };
-                decoder.decode(self.len_code_cum[len_code], self.len_code_cum[len_code + 1], self.len_code_cum[LEN_CODE_SIZE], &mut reader);
-
-                self.len_code_counts[len_code] += 1;
-                if self.len_code_counts.iter().sum::<u32>() >= 2048 {
-                    for s in 0..LEN_CODE_SIZE {
-                        self.len_code_counts[s] = (self.len_code_counts[s] >> 1) | 1;
-                    }
-                }
-                let mut acc_len = 0;
-                self.len_code_cum[0] = 0;
-                for k in 0..LEN_CODE_SIZE {
-                    acc_len += self.len_code_counts[k];
-                    self.len_code_cum[k + 1] = acc_len;
-                }
-
-                let len = if len_code == 0 {
-                    self.last_length
-                } else {
-                    let lb = len_code - 1;
-                    let extra_bits = LEN_EXTRA[lb];
-                    let mut extra = 0;
-                    for _ in 0..extra_bits {
-                        extra = (extra << 1) | decoder.decode_bit(&mut reader) as usize;
-                    }
-                    LEN_BASE[lb] + extra
-                };
-                self.last_length = len;
-
-                tokens.push(Token::Match { dist: dist as u16, len: len as u8 });
             } else {
-                tokens.push(Token::Nibble(symbol as u8));
+                if let Some(hi) = nibble_hi {
+                    out.push((hi << 4) | symbol as u8);
+                    nibble_hi = None;
+                } else {
+                    nibble_hi = Some(symbol as u8);
+                }
                 self.current_node = ((self.current_node & 0x0F) << 4) | symbol;
             }
         }
 
-        tokens
+        out
     }
-}
-
-// ============================================================================
-// RECONSTRUTOR LZ77
-// ============================================================================
-pub fn lz77_reconstruct(tokens: &[Token]) -> Vec<u8> {
-    let mut out = Vec::new();
-    let mut nibble_hi: Option<u8> = None;
-
-    for &token in tokens {
-        match token {
-            Token::EOF => break,
-            Token::Match { dist, len } => {
-                let start = out.len() - dist as usize;
-                for k in 0..len as usize {
-                    out.push(out[start + k]);
-                }
-            }
-            Token::Nibble(nib) => {
-                if let Some(hi) = nibble_hi {
-                    out.push((hi << 4) | nib);
-                    nibble_hi = None;
-                } else {
-                    nibble_hi = Some(nib);
-                }
-            }
-        }
-    }
-    out
 }

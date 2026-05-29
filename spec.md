@@ -1,6 +1,8 @@
-# GhostPredict v9 — Especificação Algorítmica
+# GhostPredict v10 — Especificação Algorítmica
 
-Compressor lossless **zero-overhead** otimizado para payloads pequenos (< 4 KB). Esta especificação descreve o algoritmo de forma independente de linguagem — qualquer implementação que respeite as regras aqui produzirá streams `.gpa` bit-exatos compatíveis entre si.
+Compressor lossless de **overhead mínimo (1 bit)** otimizado para payloads pequenos (< 4 KB). Esta especificação descreve o algoritmo de forma independente de linguagem — qualquer implementação que respeite as regras aqui produzirá streams `.gpa` bit-exatos compatíveis entre si.
+
+> **Mudanças do v10 em relação ao v9:** (1) um **bit de flag de modo** prefixa o stream (0 = comprimido, 1 = stored); (2) **modo stored** grava os bytes crus quando a compressão inflaria, garantindo inflação máxima de **+1 byte**; (3) o pipeline de referência é **streaming** (não materializa o stream de tokens), mantendo RAM ~constante. O núcleo estatístico (LZ77 + PPM-D + aritmético) é idêntico ao v9.
 
 ---
 
@@ -10,10 +12,11 @@ Compressor lossless **zero-overhead** otimizado para payloads pequenos (< 4 KB).
 |---|---|
 | Tipo | Lossless, 1-pass, adaptativo |
 | Alvo primário | Payloads de 32 B a 4 KB (IoT, MQTT, CoAP, HTTP, telemetria) |
-| Overhead de cabeçalho | **Zero bytes** (nenhuma tabela, magic ou metadado) |
+| Overhead de cabeçalho | **1 bit** (flag de modo; nenhuma tabela, magic ou metadado) |
+| Inflação máxima garantida | **+1 byte** (via modo stored) |
 | Determinismo | Bit-exato em qualquer arquitetura (aritmética inteira) |
-| Memória de trabalho típica | ~50 KB no compressor; ~50 KB no descompressor |
-| Limite mínimo eficiente | ~13 B (abaixo disso o overhead arithmético infla 1 B) |
+| Memória de trabalho típica | ~37 KB (grafo PPM) + buffers de E/S; ~constante para payloads pequenos |
+| Limite mínimo eficiente | ~13 B (abaixo disso o overhead aritmético/flag infla até 1 B) |
 
 ---
 
@@ -35,10 +38,13 @@ três modelos probabilísticos paralelos:
 fluxo de bits
     │
     ▼  Padding com zeros até múltiplo de 8
-arquivo .gpa (puramente o stream aritmético)
+stream aritmético (precedido por 1 bit de flag = 0)
+    │
+    ▼  Decisão de modo: se |comprimido| > |original| + 1, descarta e usa STORED
+arquivo .gpa (flag + stream comprimido  OU  0x80 + bytes crus)
 ```
 
-A descompressão é exatamente o espelho: lê bits, decodifica símbolos com modelos sincronizados, expande tokens com LZ77 reverso.
+A descompressão é exatamente o espelho: lê o bit de flag; se for 1, devolve os bytes crus; se for 0, decodifica símbolos com modelos sincronizados e expande tokens com LZ77 reverso. O pipeline de referência processa tokens em **streaming** (emite/consome um token por vez, sem acumular o stream completo em memória).
 
 ---
 
@@ -500,33 +506,41 @@ Quando o token corrente é `EOF`:
 
 ```
 1. Lê bytes brutos
-2. tokens ← lz77_parse(bytes)
-3. Inicializa modelos e codificador aritmético
-4. Para cada token no stream:
+2. Inicializa modelos e codificador aritmético
+3. Emite o bit de flag de modo = 0 (comprimido)
+4. Em streaming, para cada token produzido pelo lz77_parse (§5.5):
    a. Codifica símbolo principal (§7.1)
    b. Se for MATCH: codifica dist (§7.2), depois length (§7.3)
    c. Atualiza estado (§7.1 aprendizado + shift de current_node)
-5. encoder.finish() → bitstream
-6. Padding com zeros até múltiplo de 8 bits
-7. Empacota em bytes → arquivo .gpa
+5. encoder.finish() → bitstream; padding até múltiplo de 8 bits → `comp`
+6. Decisão de modo (nunca inflar):
+   se len(comp) ≤ len(original) + 1:  saída ← comp
+   senão:                              saída ← [0x80] ++ bytes_originais  (STORED)
+7. Escreve a saída → arquivo .gpa
 ```
+
+O parser LZ77 **não** precisa materializar o stream de tokens: ele pode emitir cada token via callback consumido imediatamente pelo codificador (mesmo resultado bit-exato, RAM menor).
 
 ## 9. Pipeline Completo (Descompressor)
 
 ```
-1. Lê bytes do .gpa, expande para bitstring
-2. Inicializa modelos (idênticos ao compressor) e decodificador
-3. Loop:
+1. Lê bytes do .gpa
+2. Lê o bit de flag (MSB do 1º byte):
+   se flag = 1:  raw ← bytes[1..]  (STORED — devolve cru); FIM.
+3. (flag = 0) Inicializa modelos (idênticos ao compressor) e decodificador,
+   começando a leitura de bits APÓS o bit de flag
+4. Loop:
    a. Decodifica símbolo principal:
       - Se T = 0: usa o0_cum
       - Senão: lê target, se target = T é escape, senão é hit
    b. Se símbolo = EOF: pare
-   c. Se símbolo = MATCH: decodifica dist e length
-   d. Atualiza estado idêntico ao compressor
-4. tokens ← lista de símbolos decodificados (com tuplas MATCH/dist/len)
-5. raw ← lz77_reconstruct(tokens)
-6. Escreve raw
+   c. Se símbolo = MATCH: decodifica dist e length, copia do histórico (LZ77 reverso)
+   d. Senão: monta byte a partir dos nibbles (par alto/baixo)
+   e. Atualiza estado idêntico ao compressor
+5. Escreve raw
 ```
+
+A reconstrução LZ77 é feita **inline** no loop (sem materializar o stream de tokens).
 
 ### Reconstrução LZ77
 
@@ -556,20 +570,26 @@ lz77_reconstruct(tokens):
 
 ## 10. Formato do Arquivo `.gpa`
 
+O primeiro **bit** (MSB do primeiro byte, pois o bitstream é MSB-first) é a flag de modo:
+
 ```
-┌─────────────────────────────┐
-│ bytes do bitstream          │
-│ (padded com zeros ao final  │
-│  até múltiplo de 8 bits)    │
-└─────────────────────────────┘
+Modo COMPRIMIDO (flag = 0):
+┌───┬─────────────────────────────┐
+│ 0 │ stream aritmético           │   ← flag + bits do coder,
+│   │ (padded até múltiplo de 8)  │     padded com zeros ao final
+└───┴─────────────────────────────┘
+
+Modo STORED (flag = 1):
+┌──────┬──────────────────────────┐
+│ 0x80 │ bytes originais crus     │   ← 1º byte = 1000_0000, resto = raw
+└──────┴──────────────────────────┘
 ```
 
-- **Sem header.**
-- **Sem trailer.**
-- **Sem checksum.**
-- **Sem tabela de frequências.**
-
-O conteúdo é puramente o output do codificador aritmético. O fim lógico é determinado pelo símbolo `EOF` decodificado, não pelo tamanho do arquivo.
+- **Header de 1 bit** (a flag de modo). Nenhum magic, tabela ou metadado.
+- **Sem trailer. Sem checksum. Sem tabela de frequências.**
+- No modo comprimido, o fim lógico é determinado pelo símbolo `EOF` decodificado, não pelo tamanho do arquivo.
+- No modo stored, o tamanho do arquivo determina o fim (`raw = bytes[1..]`).
+- **Garantia:** a saída nunca excede `tamanho_original + 1` byte.
 
 ---
 
@@ -612,11 +632,11 @@ O descompressor não precisa do `head`/`prev` da LZ77 (só recebe matches já de
 
 | Input | Saída esperada |
 |---|---|
-| 0 bytes | 1 byte (só o EOF codificado em Ordem-0) |
+| 0 bytes | 1 byte (flag + EOF codificado em Ordem-0) |
 | 1 byte | 2 bytes |
-| Input < ~13 bytes | Pode inflar 1 byte por causa do EOF + finalização |
+| Input < ~13 bytes | Pode inflar até 1 byte (flag + EOF + finalização) |
 | Input com matches saturados (mesmo padrão repetido) | Ratio ≈ 1 bit por byte original |
-| Ruído puro (alta entropia) | Inflação ~5-15% (esperado, é o teto de Shannon) |
+| Ruído puro (alta entropia) | **Modo stored** ativa: saída = original + 1 byte (sem mais o teto de Shannon que inflava ~5-22%) |
 
 ### 12.4 Compatibilidade entre implementações
 
@@ -635,16 +655,16 @@ Diferenças no **match-finder** (depth da chain, lazy matching) **não afetam** 
 
 Para validar conformidade, implementações **devem** reproduzir os tamanhos abaixo (bit-exatos):
 
-| Input | `.gpa` esperado (bytes) |
-|---|---|
-| `b""` | 1 |
-| `b"A"` | 2 |
-| `b"Hello World!"` | 13 |
-| `bytes(range(256))` | 285 |
-| `b"A" × 100` | 6 |
-| `b'{"sensor_id":42,"temp":23.5,"hum":60}' × 30` (1110 B) | 45 |
+| Input | `.gpa` esperado (bytes) | Modo |
+|---|---|---|
+| `b""` | 1 | comprimido |
+| `b"A"` | 2 | comprimido |
+| `b"Hello World!"` | 13 | comprimido |
+| `bytes(range(256))` | 257 | **stored** (256 + 1) |
+| `b"A" × 100` | 6 | comprimido |
+| `b'{"sensor_id":42,"temp":23.5,"hum":60}' × 30` (1110 B) | 46 | comprimido |
 
-Pequenas variações (±1-2 bytes) em outras entradas são aceitáveis se o match-finder diferir, desde que round-trip seja preservado.
+Os valores acima são referência do formato **v10** (incluem o bit de flag; `range(256)` cai em stored). Pequenas variações (±1-2 bytes) em outras entradas são aceitáveis se o match-finder diferir, desde que o round-trip seja preservado e a inflação não exceda +1 byte.
 
 ---
 
@@ -654,6 +674,7 @@ Pequenas variações (±1-2 bytes) em outras entradas são aceitáveis se o matc
 |---|---|
 | v7 | PPM Ordem-2 nibble + Máscara de Exclusão (PPMA) |
 | v8 | + LZ77 com janela 4 KB, hash chain, buckets PPM para dist/len |
-| **v9** | + Offset History (3 slots) + Last Length + Lazy Matching + Prior ASCII |
+| v9 | + Offset History (3 slots) + Last Length + Lazy Matching + Prior ASCII |
+| **v10** | + flag de modo (1 bit) + modo STORED (nunca inflar > +1 B) + pipeline streaming (RAM ~constante) |
 
-A evolução preserva a tese fundamental do v7 (zero-overhead, nibble alphabet) e amplia o range competitivo para 32 B–4 KB com 98% de vitórias contra zstd-22 e 100% contra gzip-9.
+A evolução preserva a tese fundamental do v7 (nibble alphabet, sem dicionário no arquivo) e amplia o range competitivo para 32 B–4 KB. **Validação empírica (v10, dados realistas):** o GPA vence deflate/gzip/zstd/lz4 em **mensagens únicas pequenas (< ~60 B)**, onde é o único que comprime em vez de inflar; em **streams multi-mensagem** o zstd-1 leva vantagem (janela maior). É um especialista em micro-payloads, não um compressor universal.
