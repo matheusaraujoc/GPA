@@ -267,7 +267,10 @@ impl ArithmeticDecoder {
 pub enum Token {
     Nibble(u8),
     EOF,
-    Match { dist: usize, len: usize },
+    // dist <= LZ_WINDOW (4096) cabe em u16; len <= LZ_MAX_MATCH (67) cabe em u8.
+    // Mantém o Token compacto (~4 B vs 24 B com usize) para nao explodir RAM em
+    // arquivos grandes onde o stream de tokens e materializado por completo.
+    Match { dist: u16, len: u8 },
 }
 
 // ============================================================================
@@ -383,7 +386,7 @@ impl LZ77 {
                     }
                 }
 
-                tokens.push(Token::Match { dist: cur_dist, len: cur_len });
+                tokens.push(Token::Match { dist: cur_dist as u16, len: cur_len as u8 });
                 for j in 1..cur_len {
                     self.insert_hash(raw, i + j, n);
                 }
@@ -545,6 +548,8 @@ impl GhostPredictEngine {
 
             // Processamento secundário para MATCH
             if let Token::Match { dist, len } = token {
+                let dist = dist as usize;
+                let len = len as usize;
                 // Modelo Distância
                 let dist_code = if dist == self.last_offsets[0] {
                     0
@@ -794,7 +799,7 @@ impl GhostPredictEngine {
                 };
                 self.last_length = len;
 
-                tokens.push(Token::Match { dist, len });
+                tokens.push(Token::Match { dist: dist as u16, len: len as u8 });
             } else {
                 tokens.push(Token::Nibble(symbol as u8));
                 self.current_node = ((self.current_node & 0x0F) << 4) | symbol;
@@ -816,8 +821,8 @@ pub fn lz77_reconstruct(tokens: &[Token]) -> Vec<u8> {
         match token {
             Token::EOF => break,
             Token::Match { dist, len } => {
-                let start = out.len() - dist;
-                for k in 0..len {
+                let start = out.len() - dist as usize;
+                for k in 0..len as usize {
                     out.push(out[start + k]);
                 }
             }

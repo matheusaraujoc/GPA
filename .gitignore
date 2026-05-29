@@ -1,1 +1,11 @@
 __pycache__
+.vscode
+
+# Artefatos de teste/benchmark (gerados localmente)
+main_test.exe
+bench.py
+relatorio_testes.md
+
+# Artefatos de compilacao Rust
+*.rcgu.o
+*.pdb
