@@ -15,16 +15,16 @@ pub const ALPHABET_SIZE: usize = 18;
 pub const EOF_SYMBOL: usize     = 16;
 pub const MATCH_SYMBOL: usize   = 17;
 
-pub const LZ_WINDOW: usize      = 4096;
-pub const LZ_WIN_MASK: usize    = 4095;
+pub const LZ_WINDOW: usize      = 32768;  // v10.1: janela ampliada (era 4096) p/ casar repeticoes de longo alcance em streams
+pub const LZ_WIN_MASK: usize    = 32767;
 pub const LZ_MIN_MATCH: usize   = 4;
 pub const LZ_MAX_MATCH: usize   = 67;
 pub const LZ_HASH_SIZE: usize   = 16381;
-pub const LZ_MAX_CHAIN: usize   = 16;
+pub const LZ_MAX_CHAIN: usize   = 128;    // v10.1: chain mais funda (era 16); sem isso a janela maior nao e varrida
 
-pub const DIST_BUCKETS: usize = 13;
-pub const DIST_BASE: [usize; 13] = [1, 2, 3, 5, 9, 17, 33, 65, 129, 257, 513, 1025, 2049];
-pub const DIST_EXTRA: [u32; 13]  = [0, 0, 1, 2, 3,  4,  5,  6,   7,   8,   9,   10,   11];
+pub const DIST_BUCKETS: usize = 16;
+pub const DIST_BASE: [usize; 16] = [1, 2, 3, 5, 9, 17, 33, 65, 129, 257, 513, 1025, 2049, 4097, 8193, 16385];
+pub const DIST_EXTRA: [u32; 16]  = [0, 0, 1, 2, 3,  4,  5,  6,   7,   8,   9,   10,   11,   12,   13,   14];
 
 pub const LEN_BUCKETS: usize = 7;
 pub const LEN_BASE: [usize; 7] = [4, 5, 6, 8, 12, 20, 36];
@@ -277,15 +277,17 @@ pub enum Token {
 // LZ77 MATCH FINDER
 // ============================================================================
 pub struct LZ77 {
-    head: [i16; LZ_HASH_SIZE],
-    prev: [i16; LZ_WINDOW],
+    // v10.1: posicoes em i32 (eram i16, que truncava posicoes > 32767 e quebrava
+    // o match-finder em arquivos grandes). Agora a janela funciona ate LZ_WINDOW real.
+    head: Box<[i32; LZ_HASH_SIZE]>,
+    prev: Box<[i32; LZ_WINDOW]>,
 }
 
 impl LZ77 {
     pub fn new() -> Self {
         LZ77 {
-            head: [-1; LZ_HASH_SIZE],
-            prev: [-1; LZ_WINDOW],
+            head: Box::new([-1; LZ_HASH_SIZE]),
+            prev: Box::new([-1; LZ_WINDOW]),
         }
     }
 
@@ -344,7 +346,7 @@ impl LZ77 {
         }
         let hv = Self::hash(raw, p);
         self.prev[p & LZ_WIN_MASK] = self.head[hv];
-        self.head[hv] = p as i16;
+        self.head[hv] = p as i32;
     }
 
     /// Versao STREAMING do parser: em vez de materializar um Vec<Token>, emite cada

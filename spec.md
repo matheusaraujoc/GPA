@@ -72,18 +72,26 @@ Toda implementação **deve** usar exatamente estes valores.
 
 ### 3.3 LZ77
 
-| Parâmetro | Valor |
-|---|---|
-| `LZ_WINDOW` | 4096 |
-| `LZ_WIN_MASK` | 4095 |
-| `LZ_MIN_MATCH` | 4 |
-| `LZ_MAX_MATCH` | 67 |
-| `LZ_HASH_SIZE` | 16381 (primo) |
-| `LZ_MAX_CHAIN` | 16 |
+| Parâmetro | Valor (v10.1) | Valor (v9/v10) |
+|---|---|---|
+| `LZ_WINDOW` | **32768** | 4096 |
+| `LZ_WIN_MASK` | **32767** | 4095 |
+| `LZ_MIN_MATCH` | 4 | 4 |
+| `LZ_MAX_MATCH` | 67 | 67 |
+| `LZ_HASH_SIZE` | 16381 (primo) | 16381 |
+| `LZ_MAX_CHAIN` | **128** | 16 |
+
+> **v10.1:** as posições da hash-chain (`head`/`prev`) passaram de `i16` para `i32` — em `i16` qualquer posição > 32767 truncava, quebrando o match-finder em arquivos grandes. Com `i32` + janela 32 KB + chain mais funda, o LZ passa a casar repetições de longo alcance (streams). É uma mudança só do **codificador**: o decodificador reconstrói a partir das distâncias codificadas e não tem janela. Custo: tabelas LZ do codificador ~192 KB (não afeta a RAM de decodificação).
 
 ### 3.4 Buckets de distância (modelo Dist)
 
 ```
+v10.1 (cobre dist até 32768):
+DIST_BUCKETS = 16
+DIST_BASE   = [1, 2, 3, 5, 9, 17, 33, 65, 129, 257, 513, 1025, 2049, 4097, 8193, 16385]
+DIST_EXTRA  = [0, 0, 1, 2, 3,  4,  5,  6,   7,   8,   9,   10,   11,   12,   13,   14]
+
+v9/v10 (cobria dist até 4096):
 DIST_BUCKETS = 13
 DIST_BASE   = [1, 2, 3, 5, 9, 17, 33, 65, 129, 257, 513, 1025, 2049]
 DIST_EXTRA  = [0, 0, 1, 2, 3,  4,  5,  6,   7,   8,   9,   10,   11]
@@ -103,7 +111,7 @@ LEN_EXTRA = [0, 0, 1, 2,  3,  4,  5]
 
 | Modelo | Tamanho | Layout |
 |---|---|---|
-| `DIST_CODE_SIZE` | 16 | índices 0–2 = REP0/REP1/REP2; 3–15 = bucket novo |
+| `DIST_CODE_SIZE` | 19 (v10.1; era 16) | índices 0–2 = REP0/REP1/REP2; 3+ = bucket novo (3–18 em v10.1) |
 | `LEN_CODE_SIZE` | 8 | índice 0 = REP (igual ao último length); 1–7 = bucket novo |
 
 ### 3.7 Prior ASCII (modelo Ordem-0 principal)
@@ -675,6 +683,7 @@ Os valores acima são referência do formato **v10** (incluem o bit de flag; `ra
 | v7 | PPM Ordem-2 nibble + Máscara de Exclusão (PPMA) |
 | v8 | + LZ77 com janela 4 KB, hash chain, buckets PPM para dist/len |
 | v9 | + Offset History (3 slots) + Last Length + Lazy Matching + Prior ASCII |
-| **v10** | + flag de modo (1 bit) + modo STORED (nunca inflar > +1 B) + pipeline streaming (RAM ~constante) |
+| v10 | + flag de modo (1 bit) + modo STORED (nunca inflar > +1 B) + pipeline streaming (RAM ~constante) |
+| **v10.1** | posições LZ em `i32` (corrige truncamento i16) + janela 4 KB→32 KB + chain 16→128 + buckets de distância 13→16. Destrava o LZ em arquivos grandes/streams (codificador-only). |
 
 A evolução preserva a tese fundamental do v7 (nibble alphabet, sem dicionário no arquivo) e amplia o range competitivo para 32 B–4 KB. **Validação empírica (v10, dados realistas):** o GPA vence deflate/gzip/zstd/lz4 em **mensagens únicas pequenas (< ~60 B)**, onde é o único que comprime em vez de inflar; em **streams multi-mensagem** o zstd-1 leva vantagem (janela maior). É um especialista em micro-payloads, não um compressor universal.
