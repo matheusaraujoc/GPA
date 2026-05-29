@@ -81,7 +81,9 @@ Toda implementação **deve** usar exatamente estes valores.
 | `LZ_HASH_SIZE` | 16381 (primo) | 16381 |
 | `LZ_MAX_CHAIN` | **128** | 16 |
 
-> **v10.1:** as posições da hash-chain (`head`/`prev`) passaram de `i16` para `i32` — em `i16` qualquer posição > 32767 truncava, quebrando o match-finder em arquivos grandes. Com `i32` + janela 32 KB + chain mais funda, o LZ passa a casar repetições de longo alcance (streams). É uma mudança só do **codificador**: o decodificador reconstrói a partir das distâncias codificadas e não tem janela. Custo: tabelas LZ do codificador ~192 KB (não afeta a RAM de decodificação).
+> **v10.1:** as posições da hash-chain (`head`/`prev`) passaram de `i16` para `i32` — em `i16` qualquer posição > 32767 truncava, quebrando o match-finder em arquivos grandes. Com `i32` + janela 32 KB + chain mais funda, o LZ passa a casar repetições de longo alcance (streams). É uma mudança só do **codificador**: o decodificador reconstrói a partir das distâncias codificadas e não tem janela.
+
+> **v10.2 (perfil de janela auto-selecionado):** o codificador escolhe a janela pelo tamanho do input — `LZ_WINDOW_MICRO` (4096) para payloads ≤ 4 KB, `LZ_WINDOW` (32768) acima disso. `prev` é dimensionado em runtime (`Vec`), então payloads pequenos alocam só ~16 KB de `prev` (heap do codificador ~117 KB) em vez de 128 KB (~232 KB). Como num arquivo ≤ 4 KB nenhuma distância pode exceder 4 KB, a janela micro **não perde ratio**. Decisão só do codificador; formato e decodificador inalterados.
 
 ### 3.4 Buckets de distância (modelo Dist)
 
@@ -684,6 +686,7 @@ Os valores acima são referência do formato **v10** (incluem o bit de flag; `ra
 | v8 | + LZ77 com janela 4 KB, hash chain, buckets PPM para dist/len |
 | v9 | + Offset History (3 slots) + Last Length + Lazy Matching + Prior ASCII |
 | v10 | + flag de modo (1 bit) + modo STORED (nunca inflar > +1 B) + pipeline streaming (RAM ~constante) |
-| **v10.1** | posições LZ em `i32` (corrige truncamento i16) + janela 4 KB→32 KB + chain 16→128 + buckets de distância 13→16. Destrava o LZ em arquivos grandes/streams (codificador-only). |
+| v10.1 | posições LZ em `i32` (corrige truncamento i16) + janela 4 KB→32 KB + chain 16→128 + buckets de distância 13→16. Destrava o LZ em arquivos grandes/streams (codificador-only). |
+| **v10.2** | janela auto-selecionada por tamanho (micro 4 KB p/ ≤4 KB, stream 32 KB acima); `prev` dimensionado em runtime. Reduz heap do codificador de ~232 KB→~117 KB no nicho-alvo, sem perda de ratio. |
 
 A evolução preserva a tese fundamental do v7 (nibble alphabet, sem dicionário no arquivo) e amplia o range competitivo para 32 B–4 KB. **Validação empírica (v10, dados realistas):** o GPA vence deflate/gzip/zstd/lz4 em **mensagens únicas pequenas (< ~60 B)**, onde é o único que comprime em vez de inflar; em **streams multi-mensagem** o zstd-1 leva vantagem (janela maior). É um especialista em micro-payloads, não um compressor universal.

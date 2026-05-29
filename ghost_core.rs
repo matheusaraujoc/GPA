@@ -15,8 +15,8 @@ pub const ALPHABET_SIZE: usize = 18;
 pub const EOF_SYMBOL: usize     = 16;
 pub const MATCH_SYMBOL: usize   = 17;
 
-pub const LZ_WINDOW: usize      = 32768;  // v10.1: janela ampliada (era 4096) p/ casar repeticoes de longo alcance em streams
-pub const LZ_WIN_MASK: usize    = 32767;
+pub const LZ_WINDOW: usize       = 32768;  // janela "stream" (gateways/arquivos grandes) e teto maximo
+pub const LZ_WINDOW_MICRO: usize = 4096;   // v10.2: janela "micro" p/ payloads <= 4 KB (RAM minima, zero perda de ratio)
 pub const LZ_MIN_MATCH: usize   = 4;
 pub const LZ_MAX_MATCH: usize   = 67;
 pub const LZ_HASH_SIZE: usize   = 16381;
@@ -278,16 +278,23 @@ pub enum Token {
 // ============================================================================
 pub struct LZ77 {
     // v10.1: posicoes em i32 (eram i16, que truncava posicoes > 32767 e quebrava
-    // o match-finder em arquivos grandes). Agora a janela funciona ate LZ_WINDOW real.
+    // o match-finder em arquivos grandes).
+    // v10.2: `prev` e a janela sao dimensionados em runtime (perfil micro/stream),
+    // para nao alocar 128 KB de `prev` quando o payload e pequeno.
     head: Box<[i32; LZ_HASH_SIZE]>,
-    prev: Box<[i32; LZ_WINDOW]>,
+    prev: Vec<i32>,
+    window: usize,
+    win_mask: usize,
 }
 
 impl LZ77 {
-    pub fn new() -> Self {
+    pub fn new(window: usize) -> Self {
+        debug_assert!(window.is_power_of_two(), "janela LZ deve ser potencia de 2");
         LZ77 {
             head: Box::new([-1; LZ_HASH_SIZE]),
-            prev: Box::new([-1; LZ_WINDOW]),
+            prev: vec![-1i32; window],
+            window,
+            win_mask: window - 1,
         }
     }
 
@@ -308,7 +315,7 @@ impl LZ77 {
         let mut attempts = 0;
         let limit = min(LZ_MAX_MATCH, n - i);
 
-        while cand >= 0 && (i - cand as usize) <= LZ_WINDOW && attempts < LZ_MAX_CHAIN {
+        while cand >= 0 && (i - cand as usize) <= self.window && attempts < LZ_MAX_CHAIN {
             let c_pos = cand as usize;
             if best_len > 0 {
                 if i + best_len >= n {
@@ -316,7 +323,7 @@ impl LZ77 {
                 }
                 // Quick filter
                 if raw[c_pos + best_len] != raw[i + best_len] {
-                    cand = self.prev[c_pos & LZ_WIN_MASK] as isize;
+                    cand = self.prev[c_pos & self.win_mask] as isize;
                     attempts += 1;
                     continue;
                 }
@@ -333,7 +340,7 @@ impl LZ77 {
                     break;
                 }
             }
-            cand = self.prev[c_pos & LZ_WIN_MASK] as isize;
+            cand = self.prev[c_pos & self.win_mask] as isize;
             attempts += 1;
         }
 
@@ -345,7 +352,7 @@ impl LZ77 {
             return;
         }
         let hv = Self::hash(raw, p);
-        self.prev[p & LZ_WIN_MASK] = self.head[hv];
+        self.prev[p & self.win_mask] = self.head[hv];
         self.head[hv] = p as i32;
     }
 
@@ -630,7 +637,13 @@ impl GhostPredictEngine {
         let mut writer = BitWriter::new();
         writer.write_bit(0); // flag=0 => fluxo comprimido
         let mut coder = ArithmeticCoder::new();
-        let mut lz = LZ77::new();
+        // Auto-seleciona o perfil de janela pelo tamanho do input:
+        //  - payload <= 4 KB (nicho-alvo): janela micro (4 KB) -> RAM minima, SEM perda de
+        //    ratio (num arquivo de 4 KB nenhuma distancia pode passar de 4 KB);
+        //  - acima disso: janela stream (32 KB) -> captura repeticoes de longo alcance.
+        // O decodificador independe da janela, entao isso e 100% compativel com o formato.
+        let window = if raw.len() <= LZ_WINDOW_MICRO { LZ_WINDOW_MICRO } else { LZ_WINDOW };
+        let mut lz = LZ77::new(window);
         lz.parse_streaming(raw, |tok| self.encode_token(tok, &mut coder, &mut writer));
         coder.finish(&mut writer);
         let compressed = writer.bytes;
