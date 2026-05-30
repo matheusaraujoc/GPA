@@ -1,6 +1,8 @@
-# GhostPredict v10 — Especificação Algorítmica
+# GhostPredict v11 — Especificação Algorítmica
 
 Compressor lossless **zero-overhead** otimizado para payloads pequenos (< 4 KB). Esta especificação descreve o algoritmo de forma independente de linguagem — qualquer implementação que respeite as regras aqui produzirá streams `.gpa` bit-exatos compatíveis entre si.
+
+> **v11 adiciona o modo *primed* (§14):** um prior de domínio embutido no codec (não no arquivo) que aquece o modelo + dicionário LZ. É opcional e ortogonal ao formato cru abaixo — o caminho "frio" (§2–§13) permanece idêntico ao v10.3.
 
 > **Linhagem v10:** o v10/v10.1/v10.2 experimentaram um bit de flag de modo + modo STORED (nunca inflar). O **v10.3 removeu a flag e o modo stored**, voltando ao formato zero-overhead do v9 (o `.gpa` é puramente o stream aritmético), porque a flag taxava em até +1 byte justamente os micro-payloads — o nicho onde o GPA é imbatível. O que permaneceu do v10: pipeline **streaming** (RAM ~constante, não materializa o stream de tokens), posições LZ em `i32` (corrige bug i16), janela auto-selecionada (micro 4 KB / stream 32 KB). Consequência da remoção do stored: dados **incompressíveis** voltam a poder inflar (teto de Shannon) — aceitável, pois estão fora do nicho.
 
@@ -659,7 +661,42 @@ Os valores acima são referência do formato **v10.3** (zero-overhead; sem flag/
 
 ---
 
-## 14. Histórico de Versões
+## 14. Modo *Primed* (prior embutido)
+
+Extensão **opcional** que injeta **conhecimento de domínio** no codec — **não no arquivo**. Um corpus fixo `PRIMER` (embutido no binário via `include_bytes!`; idêntico no compressor e no descompressor) aquece os modelos e serve de dicionário LZ antes de processar a mensagem. O `.gpa` resultante contém **apenas a mensagem codificada**; o primer nunca é transmitido — logo, o arquivo permanece sem dicionário.
+
+### 14.1 Aquecimento do modelo (`prime_model`)
+
+1. Parseia o `PRIMER` com o LZ77 (§5), obtendo o stream de tokens (**descarta o `EOF` final**).
+2. Para cada token, executa **apenas o aprendizado** dos modelos (§7) — atualização de contadores, cumulativos, MTF de offsets, `last_length`, shift de `current_node` — **sem codificar**.
+3. Ao fim, o estado dos modelos reflete a estatística do domínio; `current_node` = contexto do último byte do primer.
+
+O descompressor executa o **mesmo** aquecimento (tem o `PRIMER` embutido), chegando a um estado idêntico.
+
+### 14.2 Compressão (`compress_primed`)
+
+1. `prime_model(PRIMER)`.
+2. `combined ← PRIMER ++ mensagem`. Parseia `combined` **a partir da posição `len(PRIMER)`** com a hash LZ pré-carregada com as posições do primer (`parse_with_dict`): os *matches* da mensagem podem referenciar substrings do primer (distâncias para trás; **nunca cruzam a fronteira**).
+3. Codifica os tokens da mensagem (§7–§8) com os modelos já aquecidos; `finish()` → `.gpa`.
+
+### 14.3 Descompressão (`decompress_primed`)
+
+1. `prime_model(PRIMER)` — idêntico ao compressor.
+2. Buffer de saída inicializado com `PRIMER` (para os *matches* no dicionário reconstruírem).
+3. Decodifica a mensagem (§9), reconstruindo inline; *matches* podem copiar da região do primer.
+4. Retorna `saída[len(PRIMER)..]` (descarta o prefixo do primer).
+
+### 14.4 Propriedades
+
+- **Zero dicionário no arquivo:** o primer é parte do codec, não do payload.
+- **Determinismo:** o aquecimento é causal e idêntico nos dois lados (mesmo `PRIMER`).
+- **Janela:** usa `LZ_WINDOW` (32 KB); o primer deve caber na janela para a mensagem casar todo ele.
+- **Compatibilidade:** um `.gpa` *primed* só é decodificável com o **mesmo** `PRIMER` — é um formato dependente de codec, distinto do caminho frio.
+- **Ganho:** elimina o *cold-start* — a maior limitação em mensagens minúsculas frias. Ver [RESULTADOS.md](RESULTADOS.md).
+
+---
+
+## 15. Histórico de Versões
 
 | Versão | Mudança principal |
 |---|---|
@@ -669,6 +706,7 @@ Os valores acima são referência do formato **v10.3** (zero-overhead; sem flag/
 | v10 | + flag de modo (1 bit) + modo STORED (nunca inflar > +1 B) + pipeline streaming (RAM ~constante) |
 | v10.1 | posições LZ em `i32` (corrige truncamento i16) + janela 4 KB→32 KB + chain 16→128 + buckets de distância 13→16. Destrava o LZ em arquivos grandes/streams (codificador-only). |
 | v10.2 | janela auto-selecionada por tamanho (micro 4 KB p/ ≤4 KB, stream 32 KB acima); `prev` dimensionado em runtime. Reduz heap do codificador de ~232 KB→~117 KB no nicho-alvo, sem perda de ratio. |
-| **v10.3** | **remove a flag de modo e o modo stored** → volta a zero-overhead (v9). Recupera a eficiência em micro-payloads (8/9 casos bit-idênticos ao pré-v10). Trade-off: dados incompressíveis voltam a poder inflar. |
+| v10.3 | **remove a flag de modo e o modo stored** → volta a zero-overhead (v9). Recupera a eficiência em micro-payloads (8/9 casos bit-idênticos ao pré-v10). Trade-off: dados incompressíveis voltam a poder inflar. |
+| **v11** | + **modo *primed*** (opcional): prior de domínio embutido (não vai no arquivo) aquece o PPM + dicionário LZ. Bate zstd-dict ~2× e Unishox2 em micro-payload estruturado, mantendo o `.gpa` sem dicionário. |
 
 A evolução preserva a tese fundamental do v7 (nibble alphabet, sem dicionário no arquivo) e amplia o range competitivo para 32 B–4 KB. **Validação empírica (v10, dados realistas):** o GPA vence deflate/gzip/zstd/lz4 em **mensagens únicas pequenas (< ~60 B)**, onde é o único que comprime em vez de inflar; em **streams multi-mensagem** o zstd-1 leva vantagem (janela maior). É um especialista em micro-payloads, não um compressor universal.

@@ -17,8 +17,8 @@ WARN_COLOR = "#fab387"
 class GhostPredictApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("GhostPredict v9 - O Predador de Micro-Payloads")
-        self.geometry("650x550")
+        self.title("GhostPredict v11 - O Predador de Micro-Payloads")
+        self.geometry("650x620")
         self.configure(bg=BG_COLOR)
         self._build_ui()
 
@@ -32,18 +32,24 @@ class GhostPredictApp(tk.Tk):
         main_frame = tk.Frame(self, bg=BG_COLOR, padx=20, pady=20)
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        tk.Label(main_frame, text="GhostPredict v9", font=("Segoe UI", 22, "bold"), bg=BG_COLOR, fg=ACCENT_COLOR).pack(pady=(0, 5))
-        tk.Label(main_frame, text="Micro-Payload Engine (< 4KB) | LZ77 + PPM-D + MTF + ASCII_PRIOR", font=("Segoe UI", 10, "italic"), bg=BG_COLOR, fg=TEXT_COLOR).pack(pady=(0, 15))
+        tk.Label(main_frame, text="GhostPredict v11", font=("Segoe UI", 22, "bold"), bg=BG_COLOR, fg=ACCENT_COLOR).pack(pady=(0, 5))
+        tk.Label(main_frame, text="Micro-Payload Engine (< 4KB) | LZ77 + PPM-D + Aritmético | + modo Primed (prior)", font=("Segoe UI", 10, "italic"), bg=BG_COLOR, fg=TEXT_COLOR).pack(pady=(0, 15))
 
 
         btn_frame = tk.Frame(main_frame, bg=BG_COLOR)
         btn_frame.pack(fill=tk.X, pady=10)
 
-        self.btn_compress = ttk.Button(btn_frame, text="1. Comprimir Arquivo (Gerar .gpa)", style="Action.TButton", command=self.cmd_compress)
+        self.btn_compress = ttk.Button(btn_frame, text="1. Comprimir (.gpa)", style="Action.TButton", command=lambda: self.cmd_compress(False))
         self.btn_compress.pack(fill=tk.X, pady=5)
 
-        self.btn_decompress = ttk.Button(btn_frame, text="2. Extrair Arquivo (.gpa)", style="Verify.TButton", command=self.cmd_decompress)
+        self.btn_compress_p = ttk.Button(btn_frame, text="1b. Comprimir COM Prior — primed (.gpa)", style="Action.TButton", command=lambda: self.cmd_compress(True))
+        self.btn_compress_p.pack(fill=tk.X, pady=5)
+
+        self.btn_decompress = ttk.Button(btn_frame, text="2. Extrair (.gpa)", style="Verify.TButton", command=lambda: self.cmd_decompress(False))
         self.btn_decompress.pack(fill=tk.X, pady=5)
+
+        self.btn_decompress_p = ttk.Button(btn_frame, text="2b. Extrair COM Prior — primed (.gpa)", style="Verify.TButton", command=lambda: self.cmd_decompress(True))
+        self.btn_decompress_p.pack(fill=tk.X, pady=5)
 
         tk.Label(main_frame, text="Console de Telemetria:", bg=BG_COLOR, fg=TEXT_COLOR, font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(20, 5))
         self.txt_log = tk.Text(main_frame, height=12, bg=PANEL_COLOR, fg=TEXT_COLOR, font=("Consolas", 9), state=tk.DISABLED, relief=tk.FLAT)
@@ -65,7 +71,9 @@ class GhostPredictApp(tk.Tk):
 
     def toggle_buttons(self, state):
         self.btn_compress.config(state=state)
+        self.btn_compress_p.config(state=state)
         self.btn_decompress.config(state=state)
+        self.btn_decompress_p.config(state=state)
 
     def format_size(self, size_bytes):
         if size_bytes < 1024: return f"{size_bytes} Bytes"
@@ -107,10 +115,10 @@ class GhostPredictApp(tk.Tk):
                 return False
         return True
 
-    def cmd_compress(self):
+    def cmd_compress(self, primed=False):
         input_path = filedialog.askopenfilename(title="Selecione o arquivo para comprimir")
         if not input_path: return
-        
+
         output_path = filedialog.asksaveasfilename(title="Salvar como", defaultextension=".gpa", filetypes=[("GhostPredict Archive", "*.gpa")])
         if not output_path: return
 
@@ -118,21 +126,22 @@ class GhostPredictApp(tk.Tk):
         self.txt_log.config(state=tk.NORMAL)
         self.txt_log.delete("1.0", tk.END)
         self.txt_log.config(state=tk.DISABLED)
-        
-        threading.Thread(target=self._worker_compress, args=(input_path, output_path), daemon=True).start()
 
-    def _worker_compress(self, input_path, output_path):
+        threading.Thread(target=self._worker_compress, args=(input_path, output_path, "cp" if primed else "c"), daemon=True).start()
+
+    def _worker_compress(self, input_path, output_path, cmd="c"):
         try:
             start_time = time.time()
-            self.log(f"\n--- INICIANDO COMPRESSÃO FAST-START ---", color=ACCENT_COLOR)
-            
+            modo = "PRIMED (com prior embutido)" if cmd == "cp" else "FAST-START"
+            self.log(f"\n--- INICIANDO COMPRESSÃO {modo} ---", color=ACCENT_COLOR)
+
             orig_size = os.path.getsize(input_path)
             self.log(f"Tamanho Original: {self.format_size(orig_size)}")
-            
+
             if self.compile_rust_engine():
                 self.log("Executando compressão nativa em Rust...")
                 exe_path = os.path.join(BASE_DIR, "main.exe")
-                res = subprocess.run([exe_path, "c", input_path, output_path],
+                res = subprocess.run([exe_path, cmd, input_path, output_path],
                                      capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW,
                                      cwd=BASE_DIR)
                 if res.stdout:
@@ -163,27 +172,28 @@ class GhostPredictApp(tk.Tk):
         finally:
             self.after(0, lambda: self.toggle_buttons(tk.NORMAL))
 
-    def cmd_decompress(self):
+    def cmd_decompress(self, primed=False):
         input_path = filedialog.askopenfilename(title="Selecione o arquivo .gpa", filetypes=[("GhostPredict Archive", "*.gpa")])
         if not input_path: return
-        
+
         output_path = filedialog.asksaveasfilename(title="Salvar extração como")
         if not output_path: return
 
         self.toggle_buttons(tk.DISABLED)
-        self.log("\n--- INICIANDO DESCOMPRESSÃO ---", color=ACCENT_COLOR)
-        threading.Thread(target=self._worker_decompress, args=(input_path, output_path), daemon=True).start()
+        modo = "PRIMED (com prior)" if primed else "padrão"
+        self.log(f"\n--- INICIANDO DESCOMPRESSÃO {modo} ---", color=ACCENT_COLOR)
+        threading.Thread(target=self._worker_decompress, args=(input_path, output_path, "dp" if primed else "d"), daemon=True).start()
 
-    def _worker_decompress(self, input_path, output_path):
+    def _worker_decompress(self, input_path, output_path, cmd="d"):
         try:
             start_time = time.time()
             comp_size = os.path.getsize(input_path)
             self.log(f"Arquivo GPA: {self.format_size(comp_size)}")
-            
+
             if self.compile_rust_engine():
                 self.log("Executando descompressão nativa em Rust...")
                 exe_path = os.path.join(BASE_DIR, "main.exe")
-                res = subprocess.run([exe_path, "d", input_path, output_path],
+                res = subprocess.run([exe_path, cmd, input_path, output_path],
                                      capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW,
                                      cwd=BASE_DIR)
                 if res.stdout:
