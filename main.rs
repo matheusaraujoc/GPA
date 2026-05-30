@@ -3,7 +3,7 @@
 
 mod ghost_core;
 
-use ghost_core::GhostPredictEngine;
+use ghost_core::{GhostPredictEngine, PRIMER};
 use std::env;
 use std::fs::File;
 use std::io::{Read, Write};
@@ -83,6 +83,22 @@ fn main() {
                 return;
             }
             decompress_file_cmd(&args[2], &args[3]);
+        }
+        "cp" => {
+            if args.len() < 4 { eprintln!("Uso: main.exe cp [entrada] [saida.gpa]"); return; }
+            let raw = std::fs::read(&args[2]).expect("erro lendo entrada");
+            let mut e = GhostPredictEngine::new();
+            let comp = e.compress_primed(&raw, PRIMER);
+            std::fs::write(&args[3], &comp).expect("erro escrevendo saida");
+            println!("primed: {} -> {} bytes", raw.len(), comp.len());
+        }
+        "dp" => {
+            if args.len() < 4 { eprintln!("Uso: main.exe dp [entrada.gpa] [saida]"); return; }
+            let payload = std::fs::read(&args[2]).expect("erro lendo entrada");
+            let mut e = GhostPredictEngine::new();
+            let out = e.decompress_primed(payload, PRIMER);
+            std::fs::write(&args[3], &out).expect("erro escrevendo saida");
+            println!("primed-dec: {} bytes", out.len());
         }
         "t" | "test" => {
             run_conformance_tests();

@@ -1,0 +1,4 @@
+# Binarios — sem conversao de fim-de-linha (primer.bin e baked via include_bytes!)
+*.exe binary
+*.bin binary
+primer.bin binary

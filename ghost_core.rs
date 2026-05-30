@@ -39,6 +39,11 @@ pub const ASCII_PRIOR: [u32; 18] = [
     1, 1,
 ];
 
+// v11-primed: corpus de dominio embutido no BINARIO (nao vai no .gpa). Aquece o
+// modelo PPM + serve de dicionario LZ para micro-payloads. Encoder e decoder
+// usam o mesmo PRIMER, entao o arquivo continua sem dicionario embarcado.
+pub const PRIMER: &[u8] = include_bytes!("primer.bin");
+
 // ============================================================================
 // AUXILIARY UTILITIES
 // ============================================================================
@@ -412,6 +417,52 @@ impl LZ77 {
 
         emit(Token::EOF);
     }
+
+    /// Como parse_streaming, mas `combined = dict ++ msg`: pre-carrega a hash com
+    /// as posicoes do dicionario (0..dict_len) e SO emite tokens da mensagem
+    /// (posicoes dict_len..n). Matches da msg podem referenciar o dicionario
+    /// (distancias para tras, nunca cruzam a fronteira). Usado no modo primed.
+    pub fn parse_with_dict<F: FnMut(Token)>(&mut self, combined: &[u8], dict_len: usize, mut emit: F) {
+        let n = combined.len();
+        for p in 0..dict_len {
+            self.insert_hash(combined, p, n);
+        }
+        let mut i = dict_len;
+        while i < n {
+            if i + LZ_MIN_MATCH > n {
+                for k in i..n {
+                    emit(Token::Nibble((combined[k] >> 4) & 0x0F));
+                    emit(Token::Nibble(combined[k] & 0x0F));
+                }
+                break;
+            }
+            let (cur_len, cur_dist) = self.find_match(combined, i, n);
+            self.insert_hash(combined, i, n);
+            if cur_len >= LZ_MIN_MATCH {
+                if i + 1 < n && cur_len < LZ_MAX_MATCH {
+                    let (next_len, _) = self.find_match(combined, i + 1, n);
+                    if next_len > cur_len {
+                        let b = combined[i];
+                        emit(Token::Nibble((b >> 4) & 0x0F));
+                        emit(Token::Nibble(b & 0x0F));
+                        i += 1;
+                        continue;
+                    }
+                }
+                emit(Token::Match { dist: cur_dist as u16, len: cur_len as u8 });
+                for j in 1..cur_len {
+                    self.insert_hash(combined, i + j, n);
+                }
+                i += cur_len;
+            } else {
+                let b = combined[i];
+                emit(Token::Nibble((b >> 4) & 0x0F));
+                emit(Token::Nibble(b & 0x0F));
+                i += 1;
+            }
+        }
+        emit(Token::EOF);
+    }
 }
 
 // ============================================================================
@@ -629,6 +680,165 @@ impl GhostPredictEngine {
                 self.current_node = ((self.current_node & 0x0F) << 4) | symbol;
             }
         }
+    }
+
+    /// Atualiza TODOS os modelos como encode_token, mas SEM codificar nada (sem coder).
+    /// Usado para "aquecer" o modelo com o PRIMER, identico nos dois lados. Deve
+    /// espelhar exatamente a parte de aprendizado de encode_token.
+    pub fn learn_token(&mut self, token: Token) {
+        let symbol = match token {
+            Token::Nibble(n) => n as usize,
+            Token::EOF => EOF_SYMBOL,
+            Token::Match { .. } => MATCH_SYMBOL,
+        };
+        let node = self.current_node;
+        let t = self.graph_totals[node];
+        let edge_x = self.graph[node][symbol];
+
+        self.graph[node][symbol] = edge_x + 1;
+        self.graph_totals[node] = t + 1;
+        if self.graph_totals[node] >= 2048 {
+            let mut sum_ctx = 0;
+            for s in 0..ALPHABET_SIZE {
+                if self.graph[node][s] > 0 {
+                    self.graph[node][s] = (self.graph[node][s] >> 1) | 1;
+                    sum_ctx += self.graph[node][s];
+                }
+            }
+            self.graph_totals[node] = sum_ctx;
+        }
+        let mut acc = 0;
+        self.graph_cum[node][0] = 0;
+        for k in 0..ALPHABET_SIZE {
+            acc += self.graph[node][k];
+            self.graph_cum[node][k + 1] = acc;
+        }
+
+        self.o0_counts[symbol] += 1;
+        if self.o0_counts.iter().sum::<u32>() >= 2048 {
+            for s in 0..ALPHABET_SIZE {
+                self.o0_counts[s] = (self.o0_counts[s] >> 1) | 1;
+            }
+        }
+        let mut acc_o0 = 0;
+        self.o0_cum[0] = 0;
+        for k in 0..ALPHABET_SIZE {
+            acc_o0 += self.o0_counts[k];
+            self.o0_cum[k + 1] = acc_o0;
+        }
+
+        if let Token::Match { dist, len } = token {
+            let dist = dist as usize;
+            let len = len as usize;
+            let dist_code = if dist == self.last_offsets[0] {
+                0
+            } else if dist == self.last_offsets[1] {
+                1
+            } else if dist == self.last_offsets[2] {
+                2
+            } else {
+                3 + bucket_dist(dist)
+            };
+            self.dist_code_counts[dist_code] += 1;
+            if self.dist_code_counts.iter().sum::<u32>() >= 2048 {
+                for s in 0..DIST_CODE_SIZE {
+                    self.dist_code_counts[s] = (self.dist_code_counts[s] >> 1) | 1;
+                }
+            }
+            let mut ad = 0;
+            self.dist_code_cum[0] = 0;
+            for k in 0..DIST_CODE_SIZE {
+                ad += self.dist_code_counts[k];
+                self.dist_code_cum[k + 1] = ad;
+            }
+            mtf_offsets(&mut self.last_offsets, dist);
+
+            let len_code = if len == self.last_length {
+                0
+            } else {
+                1 + bucket_len(len)
+            };
+            self.len_code_counts[len_code] += 1;
+            if self.len_code_counts.iter().sum::<u32>() >= 2048 {
+                for s in 0..LEN_CODE_SIZE {
+                    self.len_code_counts[s] = (self.len_code_counts[s] >> 1) | 1;
+                }
+            }
+            let mut al = 0;
+            self.len_code_cum[0] = 0;
+            for k in 0..LEN_CODE_SIZE {
+                al += self.len_code_counts[k];
+                self.len_code_cum[k + 1] = al;
+            }
+            self.last_length = len;
+        } else if symbol != EOF_SYMBOL {
+            self.current_node = ((self.current_node & 0x0F) << 4) | symbol;
+        }
+    }
+
+    /// Aquece o modelo (PPM + dist/len) com o PRIMER, sem codificar. Identico
+    /// nos dois lados. Pula o EOF (o primer nao e um stream completo).
+    fn prime_model(&mut self, primer: &[u8]) {
+        let mut lz = LZ77::new(LZ_WINDOW);
+        let mut toks: Vec<Token> = Vec::new();
+        lz.parse_streaming(primer, |t| toks.push(t));
+        for t in toks {
+            if !matches!(t, Token::EOF) {
+                self.learn_token(t);
+            }
+        }
+    }
+
+    /// COMPRESSAO PRIMED: aquece o modelo com o primer e usa o primer como
+    /// dicionario LZ; o .gpa contem apenas a mensagem codificada (primer fica
+    /// no codec, nao no arquivo).
+    pub fn compress_primed(&mut self, raw: &[u8], primer: &[u8]) -> Vec<u8> {
+        self.prime_model(primer);
+        let mut combined = Vec::with_capacity(primer.len() + raw.len());
+        combined.extend_from_slice(primer);
+        combined.extend_from_slice(raw);
+        let mut writer = BitWriter::new();
+        let mut coder = ArithmeticCoder::new();
+        let mut lz = LZ77::new(LZ_WINDOW);
+        lz.parse_with_dict(&combined, primer.len(), |tok| self.encode_token(tok, &mut coder, &mut writer));
+        coder.finish(&mut writer);
+        writer.bytes
+    }
+
+    /// DESCOMPRESSAO PRIMED: aquece o modelo identicamente e reconstroi a mensagem
+    /// num buffer prefixado pelo primer (para os matches no dicionario funcionarem).
+    pub fn decompress_primed(&mut self, payload: Vec<u8>, primer: &[u8]) -> Vec<u8> {
+        self.prime_model(primer);
+        if payload.is_empty() {
+            return Vec::new();
+        }
+        let plen = primer.len();
+        let mut reader = BitReader::new(payload);
+        let mut decoder = ArithmeticDecoder::new(&mut reader);
+        let mut out: Vec<u8> = primer.to_vec();
+        let mut nibble_hi: Option<u8> = None;
+        loop {
+            let symbol = self.decode_symbol(&mut decoder, &mut reader);
+            if symbol == EOF_SYMBOL {
+                break;
+            }
+            if symbol == MATCH_SYMBOL {
+                let (dist, len) = self.decode_match(&mut decoder, &mut reader);
+                let start = out.len() - dist;
+                for k in 0..len {
+                    out.push(out[start + k]);
+                }
+            } else {
+                if let Some(hi) = nibble_hi {
+                    out.push((hi << 4) | symbol as u8);
+                    nibble_hi = None;
+                } else {
+                    nibble_hi = Some(symbol as u8);
+                }
+                self.current_node = ((self.current_node & 0x0F) << 4) | symbol;
+            }
+        }
+        out[plen..].to_vec()
     }
 
     /// Caminho STREAMING: parsing LZ + codificacao token-a-token, sem materializar
