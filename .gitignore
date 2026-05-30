@@ -9,3 +9,4 @@ relatorio_testes.md
 # Artefatos de compilacao Rust
 *.rcgu.o
 *.pdb
+build_old/

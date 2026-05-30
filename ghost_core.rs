@@ -632,10 +632,11 @@ impl GhostPredictEngine {
     }
 
     /// Caminho STREAMING: parsing LZ + codificacao token-a-token, sem materializar
-    /// o Vec<Token>. Inclui flag de modo (1 bit) e fallback STORED (nunca infla > +1 B).
+    /// o Vec<Token>. Formato ZERO-OVERHEAD (sem header/flag) — o .gpa e puramente o
+    /// stream aritmetico, como no v9. Otimizado para o nicho de micro-payloads
+    /// compressiveis; dados incompressiveis (ruido) podem inflar (teto de Shannon).
     pub fn compress_stream(&mut self, raw: &[u8]) -> Vec<u8> {
         let mut writer = BitWriter::new();
-        writer.write_bit(0); // flag=0 => fluxo comprimido
         let mut coder = ArithmeticCoder::new();
         // Auto-seleciona o perfil de janela pelo tamanho do input:
         //  - payload <= 4 KB (nicho-alvo): janela micro (4 KB) -> RAM minima, SEM perda de
@@ -646,18 +647,7 @@ impl GhostPredictEngine {
         let mut lz = LZ77::new(window);
         lz.parse_streaming(raw, |tok| self.encode_token(tok, &mut coder, &mut writer));
         coder.finish(&mut writer);
-        let compressed = writer.bytes;
-
-        // Fallback STORED: 1o byte = 0x80 (bit de topo = flag 1), seguido dos bytes crus.
-        // Garante inflacao maxima de +1 byte mesmo em dados incompressiveis.
-        if compressed.len() <= raw.len() + 1 {
-            compressed
-        } else {
-            let mut stored = Vec::with_capacity(raw.len() + 1);
-            stored.push(0x80);
-            stored.extend_from_slice(raw);
-            stored
-        }
+        writer.bytes
     }
 
     /// Decodifica UM simbolo principal (PPM) + atualiza modelos. Compartilhado pelos
@@ -827,19 +817,13 @@ impl GhostPredictEngine {
         (dist, len)
     }
 
-    /// Caminho STREAMING: le a flag de modo (1 bit), trata STORED, e reconstroi o
-    /// fluxo LZ77 INLINE (sem materializar Vec<Token>). RAM ~constante no descompressor.
+    /// Caminho STREAMING: decodifica o stream aritmetico e reconstroi o fluxo LZ77
+    /// INLINE (sem materializar Vec<Token>). RAM ~constante no descompressor.
     pub fn decompress_stream(&mut self, payload: Vec<u8>) -> Vec<u8> {
         if payload.is_empty() {
             return Vec::new();
         }
-        // flag = bit de topo do primeiro byte (BitWriter/BitReader sao MSB-first)
-        if (payload[0] >> 7) & 1 == 1 {
-            return payload[1..].to_vec(); // modo STORED: bytes crus
-        }
-
         let mut reader = BitReader::new(payload);
-        let _ = reader.read_bit(); // consome a flag (=0)
         let mut decoder = ArithmeticDecoder::new(&mut reader);
         let mut out: Vec<u8> = Vec::new();
         let mut nibble_hi: Option<u8> = None;
