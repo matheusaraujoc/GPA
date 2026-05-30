@@ -1,20 +1,18 @@
-__pycache__
-.vscode
+# Editor / cache
+.vscode/
+__pycache__/
+*.pyc
 
-# Artefatos de teste/benchmark (gerados localmente)
+# Artefatos de build Rust (gerados localmente)
 main_test.exe
-bench.py
-relatorio_testes.md
-
-# Artefatos de compilacao Rust
-*.rcgu.o
 *.pdb
+*.rcgu.o
 build_old/
 
-# Clone de terceiros e scratch de pesquisa
-unishox/
-cm_proto.py
-cm_prior.py
-cm_prior2.py
-cm_b.py
+# Outras frentes de pesquisa (fora do escopo do GPA) e dados locais
+cm_*.py
 block_orch.py
+bench.py
+relatorio_testes.md
+unishox/
+dados_reais/

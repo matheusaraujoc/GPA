@@ -123,7 +123,6 @@ O `primer.bin` é um corpus representativo do seu domínio. Para especializar: g
 | `spec.md` | Especificação algorítmica independente de linguagem |
 | `RESULTADOS.md` | Benchmarks consolidados, limites e ganhos em profundidade |
 | `planejamento_de_testes.md` | Plano de testes original |
-| `cm_real.py`, `cm_lpaq.py` | Protótipos de pesquisa (engine de *context mixing* — direção futura, fora do escopo do GPA atual) |
 
 ---
 

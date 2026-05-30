@@ -138,9 +138,9 @@ O GPA é **imbatível no seu nicho** (micro-payload, com prior) e **não compete
 
 ## 8. Direções futuras (fora do escopo do GPA atual)
 
-Exploradas em protótipo (Python), não integradas ao engine:
+Exploradas em protótipo (Python), **não incluídas neste repositório** (mantido focado no GPA):
 
-- **Context Mixing (CM):** um CM tunado classe-lpaq (`cm_lpaq.py`) a **frio** bate gzip/zstd-19/brotli-11 em **ratio** em texto/código pequeno-médio — ao custo de velocidade (lento). CM+prior superaria o nibble-PPM+prior. Direção para mais ratio. Compressor de referência com round-trip real: `cm_real.py`.
+- **Context Mixing (CM):** um CM tunado classe-lpaq a **frio** bateu gzip/zstd-19/brotli-11 em **ratio** em texto/código pequeno-médio — ao custo de velocidade (lento). CM+prior superaria o nibble-PPM+prior. Direção para mais ratio.
 - **Orquestrador de blocos:** dividir arquivos grandes em blocos (~4 MB), comprimir em **paralelo** com **best-of-breed** por bloco (zstd/xz/GPA), unir. Dá **RAM limitada** (bloco × workers, independe do tamanho) + **velocidade** (paralelismo) + ratio best-of-breed — a arquitetura para o caso de arquivos grandes, onde o GPA entra só nos blocos do seu nicho.
 
 Estas frentes formam uma "estrutura completa" futura: **GPA para pequeno, orquestrador+ferramentas fortes para grande.** O foco atual é finalizar o **GPA (o núcleo / a inovação)**.
