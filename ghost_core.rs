@@ -26,6 +26,7 @@ pub const LZ_WINDOW_MICRO: usize = 4096;   // v10.2: janela "micro" p/ payloads 
 pub const LZ_MIN_MATCH: usize   = 4;
 pub const LZ_MAX_MATCH: usize   = 67;
 pub const LZ_HASH_SIZE: usize   = 16381;
+pub const LZ_HASH_MICRO: usize  = 4099;   // v12.1: hash menor p/ inputs <= 4 KB (head 64 KB -> 16 KB, sem perda de ratio)
 pub const LZ_MAX_CHAIN: usize   = 128;    // v10.1: chain mais funda (era 16); sem isso a janela maior nao e varrida
 
 pub const DIST_BUCKETS: usize = 16;
@@ -292,34 +293,38 @@ pub struct LZ77 {
     // o match-finder em arquivos grandes).
     // v10.2: `prev` e a janela sao dimensionados em runtime (perfil micro/stream),
     // para nao alocar 128 KB de `prev` quando o payload e pequeno.
-    head: Box<[i32; LZ_HASH_SIZE]>,
+    head: Vec<i32>,
     prev: Vec<i32>,
     window: usize,
     win_mask: usize,
+    hash_size: usize,
 }
 
 impl LZ77 {
-    pub fn new(window: usize) -> Self {
+    // v12.1: `head` e a janela dimensionados em runtime. Perfil micro (input <= 4 KB):
+    // janela 4 KB + hash 4099 -> tabelas LZ ~32 KB. Perfil stream: 32 KB + hash 16381.
+    pub fn new(window: usize, hash_size: usize) -> Self {
         debug_assert!(window.is_power_of_two(), "janela LZ deve ser potencia de 2");
         LZ77 {
-            head: Box::new([-1; LZ_HASH_SIZE]),
+            head: vec![-1i32; hash_size],
             prev: vec![-1i32; window],
             window,
             win_mask: window - 1,
+            hash_size,
         }
     }
 
     #[inline]
-    fn hash(raw: &[u8], p: usize) -> usize {
+    fn hash(&self, raw: &[u8], p: usize) -> usize {
         let h = ((raw[p] as usize) << 16) ^ ((raw[p + 1] as usize) << 8) ^ (raw[p + 2] as usize);
-        h % LZ_HASH_SIZE
+        h % self.hash_size
     }
 
     fn find_match(&self, raw: &[u8], i: usize, n: usize) -> (usize, usize) {
         if i + LZ_MIN_MATCH > n {
             return (0, 0);
         }
-        let hv = Self::hash(raw, i);
+        let hv = self.hash(raw, i);
         let mut cand = self.head[hv] as isize;
         let mut best_len = 0;
         let mut best_dist = 0;
@@ -362,7 +367,7 @@ impl LZ77 {
         if p + 2 >= n {
             return;
         }
-        let hv = Self::hash(raw, p);
+        let hv = self.hash(raw, p);
         self.prev[p & self.win_mask] = self.head[hv];
         self.head[hv] = p as i32;
     }
@@ -785,7 +790,7 @@ impl GhostPredictEngine {
     /// Aquece o modelo (PPM + dist/len) com o PRIMER, sem codificar. Identico
     /// nos dois lados. Pula o EOF (o primer nao e um stream completo).
     fn prime_model(&mut self, primer: &[u8]) {
-        let mut lz = LZ77::new(LZ_WINDOW);
+        let mut lz = LZ77::new(LZ_WINDOW, LZ_HASH_SIZE);
         let mut toks: Vec<Token> = Vec::new();
         lz.parse_streaming(primer, |t| toks.push(t));
         for t in toks {
@@ -805,7 +810,7 @@ impl GhostPredictEngine {
         combined.extend_from_slice(raw);
         let mut writer = BitWriter::new();
         let mut coder = ArithmeticCoder::new();
-        let mut lz = LZ77::new(LZ_WINDOW);
+        let mut lz = LZ77::new(LZ_WINDOW, LZ_HASH_SIZE);
         lz.parse_with_dict(&combined, primer.len(), |tok| self.encode_token(tok, &mut coder, &mut writer));
         coder.finish(&mut writer);
         writer.bytes
@@ -856,9 +861,16 @@ impl GhostPredictEngine {
         let mut writer = BitWriter::new();
         let mut coder = ArithmeticCoder::new();
         coder.encode(0, FLAG_STORED_LOW, FLAG_TOTAL, &mut writer); // is_stored = 0
-        // Auto-seleciona o perfil de janela pelo tamanho do input (micro 4 KB / stream 32 KB).
-        let window = if raw.len() <= LZ_WINDOW_MICRO { LZ_WINDOW_MICRO } else { LZ_WINDOW };
-        let mut lz = LZ77::new(window);
+        // Auto-seleciona o PERFIL pelo tamanho do input:
+        //  - micro (<= 4 KB): janela 4 KB + hash 4099 -> tabelas LZ ~32 KB (compressor-MCU);
+        //  - stream (> 4 KB):  janela 32 KB + hash 16381 -> longo alcance.
+        // Sem perda de ratio no micro (poucas posicoes p/ a hash) e seguro em qualquer tamanho.
+        let (window, hash_size) = if raw.len() <= LZ_WINDOW_MICRO {
+            (LZ_WINDOW_MICRO, LZ_HASH_MICRO)
+        } else {
+            (LZ_WINDOW, LZ_HASH_SIZE)
+        };
+        let mut lz = LZ77::new(window, hash_size);
         lz.parse_streaming(raw, |tok| self.encode_token(tok, &mut coder, &mut writer));
         coder.finish(&mut writer);
         let comp = writer.bytes;
