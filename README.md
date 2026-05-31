@@ -78,7 +78,7 @@ main.exe bench arquivo [iters]         # benchmark in-memory (tempo + heap da en
 python app.py
 ```
 
-A GUI compila a engine Rust automaticamente e expõe compressão/extração (normal e *primed*).
+A GUI compila a engine Rust automaticamente e expõe compressão/extração nos três modos: normal (`.gpa`), *primed* (com prior) e *streaming* (`.gpas`, RAM limitada).
 
 ### Trocar o prior
 
