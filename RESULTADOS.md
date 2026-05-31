@@ -91,7 +91,7 @@ Engine **frio** em arquivos reais (ratio %, maior = melhor):
 | CSV 1 MB | 1 MB | 86,5% | 81,8% | 92,1% | **95,7%** | 95,1% |
 | aleatório 64 KB | 64 KB | **−2,8%** | −0,0% | −0,0% | −0,0% | −0,1% |
 
-**Limite:** em dados gerais o GPA é **classe-gzip** — levemente atrás em texto, à frente do gzip em dados estruturados, mas **atrás de zstd/brotli/lzma**. Causas: janela LZ de 32 KB (não pega longo alcance), modelo de só 1 byte de contexto, alfabeto de nibble (desperdiça a vantagem do aritmético). Em **dados incompressíveis** ele **infla** (único do grupo — não tem modo *stored*).
+**Limite:** em dados gerais o GPA é **classe-gzip** — levemente atrás em texto, à frente do gzip em dados estruturados, mas **atrás de zstd/brotli/lzma**. Causas: janela LZ de 32 KB (não pega longo alcance), modelo de só 1 byte de contexto, alfabeto de nibble (desperdiça a vantagem do aritmético). Em **dados incompressíveis** a inflação é limitada a **~+0,1%** (modo stored, v12 — antes inflava +5..22%).
 
 ---
 
@@ -111,7 +111,7 @@ Engine frio, dados não-repetitivos crescentes:
 
 **Footprint da engine (heap de trabalho, via tracking allocator, micro-payload):**
 - **Decodificador:** ~**19 KB** (só o grafo PPM, agora em `u16`) — não usa tabelas LZ. Viável em ESP32/STM32.
-- **Codificador:** ~**99 KB** (janela micro) — dominado pela tabela hash LZ (`head`, 64 KB em `i32`).
+- **Codificador:** ~**51 KB** (perfil micro ≤ 4 KB: hash LZ 4099 + janela 4 KB + grafo `u16`); ~234 KB no perfil stream (> 4 KB, hash 16381 + janela 32 KB).
 
 > **Otimização de memória (output-neutral).** Os contadores do modelo são limitados a 2048 (limiar de rescale), então cabem em `u16`. O grafo PPM + cumulativos foram migrados de `u32`→`u16`, **halvando o modelo sem mudar o `.gpa`** (bit-idêntico; conformidade inalterada). Isso cortou o **decodificador de ~37 KB → ~19 KB**.
 >
@@ -125,7 +125,9 @@ Engine frio, dados não-repetitivos crescentes:
 - **Único que comprime micro-payload** onde os gerais incham (zero-overhead).
 - **Com prior: bate zstd-dict ~2× e Unishox2** em texto curto estruturado, sem dicionário no arquivo.
 - **Prior genérico generaliza** para texto curto estruturado amplo (8×2 vs Unishox).
-- **Decodificador leve** (~37 KB) — embarcado.
+- **Decodificador leve** (~19 KB, grafo `u16`) — embarcado; compressor micro ~51 KB.
+- **Nunca inflar** (v12): qualquer entrada cabe em ≤ ~+0,1% (flag enviesada ~0 bit no compressível).
+- **Arquivos grandes com RAM limitada** (`cs`/`ds`): RAM = bloco (~10 MB), não tamanho do arquivo.
 - **Lossless, determinístico, bit-exato, streaming.**
 
 ### Limites
@@ -133,7 +135,7 @@ Engine frio, dados não-repetitivos crescentes:
 - **Prosa livre / idioma fora do primer:** Unishox vence.
 - **Dados gerais grandes:** classe-gzip; perde para zstd/brotli/lzma (janela 32 KB).
 - **Incompressível:** inflação limitada a ~0,1% (modo stored via flag enviesada, v12).
-- **RAM = tamanho do arquivo**; **velocidade ~7 MB/s** — limita arquivos muito grandes.
+- **RAM no modo normal (`c`) = tamanho do arquivo** — mitigado pelo streaming `cs`/`ds` (RAM = bloco). **Velocidade ~7 MB/s** — lento para dados grandes.
 
 ### Posicionamento honesto
 O GPA é **imbatível no seu nicho** (micro-payload, com prior) e **não compete fora dele**. A força é a especialização, não a universalidade — exatamente a tese do projeto.

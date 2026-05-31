@@ -62,10 +62,12 @@ rustc +stable-x86_64-pc-windows-gnu -C opt-level=3 main.rs -o main.exe
 ```
 
 ```sh
-main.exe c  entrada      saida.gpa     # comprimir (zero-overhead, sem prior)
+main.exe c  entrada      saida.gpa     # comprimir (nunca inflar; flag enviesada ~0 bit)
 main.exe d  entrada.gpa  saida         # descomprimir
 main.exe cp entrada      saida.gpa     # comprimir COM prior embutido (primed)
 main.exe dp entrada.gpa  saida         # descomprimir primed
+main.exe cs entrada      saida.gpas    # comprimir em STREAMING (blocos, RAM limitada)
+main.exe ds entrada.gpas saida         # descomprimir streaming
 main.exe t                             # suíte de conformidade (round-trip bit-exato)
 main.exe bench arquivo [iters]         # benchmark in-memory (tempo + heap da engine)
 ```
@@ -93,7 +95,9 @@ O `primer.bin` é um corpus representativo do seu domínio. Para especializar: g
 | Mensagem única **< ~60 B** (sem prior) | **Único** que comprime; bate gzip/zstd/lz4 (que incham) |
 | Micro-payload **com prior** (primed) | **Bate zstd-dict ~2×** e o Unishox2 em texto curto estruturado |
 | Texto curto estruturado (JSON, URL, log, KV) | Forte, especialmente com prior genérico |
-| Footprint do **decodificador** | ~37 KB (tabelas do grafo PPM) — viável em ESP32/STM32 |
+| Footprint do **decodificador** | ~19 KB (grafo PPM em `u16`) — viável em ESP32/STM32 |
+| **Nunca inflar** (qualquer entrada) | flag enviesada (~0 bit no compressível); incompressível ≤ ~+0,1% |
+| **Arquivos grandes com RAM limitada** | modo streaming `cs`/`ds` (RAM = bloco, não tamanho do arquivo) |
 | Integridade | Lossless, bit-exato, determinístico |
 
 ### ❌ Onde o GPA perde (limites honestos)
@@ -103,8 +107,8 @@ O `primer.bin` é um corpus representativo do seu domínio. Para especializar: g
 | Mensagem minúscula **sem prior** | Perde para o **Unishox2** (codebook hand-tuned vence o cold-start) |
 | **Prosa de linguagem natural** livre | O Unishox2 (modelo de caractere) ainda ganha |
 | **Arquivos grandes** gerais (> ~100 KB) | Classe-gzip; perde para zstd/xz (janela de 32 KB não pega longo alcance) |
-| **Dados incompressíveis** (ruído/cripto) | Inflam (sem modo *stored* — teto de Shannon) |
-| **RAM em arquivos grandes** | A engine carrega o arquivo inteiro (RAM ≈ tamanho do arquivo) |
+| **Dados incompressíveis** (ruído/cripto) | Não comprimem (≤ ~+0,1% via modo stored), mas também não é o nicho |
+| **RAM em arquivos grandes** | No modo normal (`c`) RAM ≈ tamanho; use `cs`/`ds` para RAM limitada |
 | **Velocidade** | ~7–8 MB/s (codificador aritmético bit-a-bit) — lento para dados grandes |
 | Prior é **específico de domínio** | Um prior genérico cobre texto estruturado amplo; o de domínio maximiza |
 

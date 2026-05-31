@@ -1,8 +1,8 @@
-# GhostPredict v11 — Especificação Algorítmica
+# GhostPredict v12 — Especificação Algorítmica
 
 Compressor lossless **zero-overhead** otimizado para payloads pequenos (< 4 KB). Esta especificação descreve o algoritmo de forma independente de linguagem — qualquer implementação que respeite as regras aqui produzirá streams `.gpa` bit-exatos compatíveis entre si.
 
-> **v11 adiciona o modo *primed* (§14):** um prior de domínio embutido no codec (não no arquivo) que aquece o modelo + dicionário LZ. É opcional e ortogonal ao formato cru abaixo — o caminho "frio" (§2–§13) permanece idêntico ao v10.3.
+> **Linhagem:** o **v11** adiciona o modo *primed* (§14): prior de domínio embutido no codec (não no arquivo) que aquece o modelo + dicionário LZ. O **v12** adiciona a **flag de modo enviesada** + **modo stored** (nunca inflar > ~+0,1%, §10) e o container **streaming** `.gpas` (RAM limitada). O **v12.1** reduz a RAM do compressor no nicho (hash menor para ≤ 4 KB). O núcleo estatístico (§2–§13) é o mesmo desde o v10.3.
 
 > **Linhagem v10:** o v10/v10.1/v10.2 experimentaram um bit de flag de modo + modo STORED (nunca inflar). O **v10.3 removeu a flag e o modo stored**, voltando ao formato zero-overhead do v9 (o `.gpa` é puramente o stream aritmético), porque a flag taxava em até +1 byte justamente os micro-payloads — o nicho onde o GPA é imbatível. O que permaneceu do v10: pipeline **streaming** (RAM ~constante, não materializa o stream de tokens), posições LZ em `i32` (corrige bug i16), janela auto-selecionada (micro 4 KB / stream 32 KB). Consequência da remoção do stored: dados **incompressíveis** voltam a poder inflar (teto de Shannon) — aceitável, pois estão fora do nicho.
 
@@ -14,8 +14,8 @@ Compressor lossless **zero-overhead** otimizado para payloads pequenos (< 4 KB).
 |---|---|
 | Tipo | Lossless, 1-pass, adaptativo |
 | Alvo primário | Payloads de 32 B a 4 KB (IoT, MQTT, CoAP, HTTP, telemetria) |
-| Overhead de cabeçalho | **Zero bytes** (nenhuma flag, tabela, magic ou metadado) |
-| Comportamento em dados incompressíveis | Pode inflar (teto de Shannon); fora do nicho-alvo |
+| Overhead de cabeçalho | **~0,02 bit** (flag de modo enviesada; nenhuma tabela, magic ou metadado) |
+| Comportamento em dados incompressíveis | Modo stored: inflação ≤ ~+0,1% (v12) |
 | Determinismo | Bit-exato em qualquer arquitetura (aritmética inteira) |
 | Memória de trabalho típica | ~37 KB (grafo PPM) + buffers de E/S; ~constante para payloads pequenos |
 | Limite mínimo eficiente | ~13 B (abaixo disso o overhead aritmético infla até 1 B) |
@@ -579,10 +579,12 @@ lz77_reconstruct(tokens):
 └─────────────────────────────┘
 ```
 
-- **Sem header.** Nenhuma flag, magic, tabela ou metadado.
+- **Flag de modo enviesada (v12):** a primeira decisão do stream aritmético é `is_stored`, codificada com `is_stored ∈ [63,64)` de 64 (≈ 1/64). Comprimido custa ~0,02 bit (absorvido — não taxa o micro-payload); stored custa ~6 bits.
+  - **`is_stored = 0` (comprimido):** segue o stream LZ/PPM normal; fim lógico pelo símbolo `EOF`.
+  - **`is_stored = 1` (stored):** os bytes originais são codificados num modelo **flat** de 257 símbolos (256 bytes + EOF), ~8 bits/byte → saída ≈ original + ~0,1%. Usado quando a compressão inflaria.
 - **Sem trailer. Sem checksum. Sem tabela de frequências.**
-- O conteúdo é puramente o output do codificador aritmético. O fim lógico é determinado pelo símbolo `EOF` decodificado, não pelo tamanho do arquivo.
-- **Sem garantia de não-inflação:** dados incompressíveis (alta entropia) podem inflar (teto de Shannon). O GPA é otimizado para o nicho de micro-payloads compressíveis.
+- **Garantia de não-inflação relevante:** a saída nunca excede ~original + 0,1% (o codificador escolhe o menor entre comprimido e stored).
+- O `.gpas` (streaming, `cs`/`ds`) é um **container** separado: `[magic "GPAS1"]` + repetido `[u32 LE len][bloco .gpa]` + `[u32 0]`. Cada bloco é um `.gpa` normal.
 
 ---
 
@@ -707,6 +709,9 @@ O descompressor executa o **mesmo** aquecimento (tem o `PRIMER` embutido), chega
 | v10.1 | posições LZ em `i32` (corrige truncamento i16) + janela 4 KB→32 KB + chain 16→128 + buckets de distância 13→16. Destrava o LZ em arquivos grandes/streams (codificador-only). |
 | v10.2 | janela auto-selecionada por tamanho (micro 4 KB p/ ≤4 KB, stream 32 KB acima); `prev` dimensionado em runtime. Reduz heap do codificador de ~232 KB→~117 KB no nicho-alvo, sem perda de ratio. |
 | v10.3 | **remove a flag de modo e o modo stored** → volta a zero-overhead (v9). Recupera a eficiência em micro-payloads (8/9 casos bit-idênticos ao pré-v10). Trade-off: dados incompressíveis voltam a poder inflar. |
-| **v11** | + **modo *primed*** (opcional): prior de domínio embutido (não vai no arquivo) aquece o PPM + dicionário LZ. Bate zstd-dict ~2× e Unishox2 em micro-payload estruturado, mantendo o `.gpa` sem dicionário. |
+| v11 | + **modo *primed*** (opcional): prior de domínio embutido (não vai no arquivo) aquece o PPM + dicionário LZ. Bate zstd-dict ~2× e Unishox2 em micro-payload estruturado, mantendo o `.gpa` sem dicionário. |
+| v11.x | grafo PPM + modelos em `u16` (contadores ≤ 2048) — halva o modelo, **output-neutral**. Decodificador ~37 KB → ~19 KB. |
+| **v12** | + **flag de modo enviesada** + **modo stored** (modelo flat 257). Nunca inflar > ~+0,1%, com custo ~0,02 bit no compressível. Container **streaming** `.gpas` (`cs`/`ds`) para RAM limitada em arquivos grandes. |
+| **v12.1** | perfil-micro gated: hash LZ 4099 (era 16381) para inputs ≤ 4 KB → heap do compressor ~99 KB → ~51 KB, sem perda de ratio. |
 
 A evolução preserva a tese fundamental do v7 (nibble alphabet, sem dicionário no arquivo) e amplia o range competitivo para 32 B–4 KB. **Validação empírica (v10, dados realistas):** o GPA vence deflate/gzip/zstd/lz4 em **mensagens únicas pequenas (< ~60 B)**, onde é o único que comprime em vez de inflar; em **streams multi-mensagem** o zstd-1 leva vantagem (janela maior). É um especialista em micro-payloads, não um compressor universal.
