@@ -100,6 +100,14 @@ fn main() {
             std::fs::write(&args[3], &out).expect("erro escrevendo saida");
             println!("primed-dec: {} bytes", out.len());
         }
+        "cs" => {
+            if args.len() < 4 { eprintln!("Uso: main.exe cs [entrada] [saida.gpas]"); return; }
+            compress_stream_file_cmd(&args[2], &args[3]);
+        }
+        "ds" => {
+            if args.len() < 4 { eprintln!("Uso: main.exe ds [entrada.gpas] [saida]"); return; }
+            decompress_stream_file_cmd(&args[2], &args[3]);
+        }
         "t" | "test" => {
             run_conformance_tests();
         }
@@ -130,6 +138,85 @@ fn print_usage() {
     println!("  main.exe c [entrada] [saida.gpa]  : Comprimir arquivo");
     println!("  main.exe d [entrada.gpa] [saida]  : Descomprimir arquivo");
     println!("  main.exe t                        : Executar testes de conformidade Seção 13\n");
+}
+
+// ============================================================================
+// STREAMING EM BLOCOS (RAM limitada para arquivos grandes)
+// O arquivo e lido/comprimido em blocos de STREAM_BLOCK; a RAM fica limitada
+// ao tamanho do bloco + tabelas, independente do tamanho do arquivo.
+// Container .gpas: [magic 5B] depois repetido [u32 LE len][bloco comprimido],
+// terminado por [u32 LE = 0]. Cada bloco usa o formato .gpa normal (compress_stream).
+// ============================================================================
+const STREAM_BLOCK: usize = 4 * 1024 * 1024; // 4 MB (bloco >> janela 32 KB -> perda de ratio ~0)
+const STREAM_MAGIC: &[u8; 5] = b"GPAS1";
+
+fn compress_stream_file_cmd(input_path: &str, output_path: &str) {
+    let start = Instant::now();
+    let mut fin = match File::open(input_path) {
+        Ok(f) => f, Err(e) => { eprintln!("Erro ao abrir entrada: {}", e); return; }
+    };
+    let mut fout = match File::create(output_path) {
+        Ok(f) => f, Err(e) => { eprintln!("Erro ao criar saida: {}", e); return; }
+    };
+    if fout.write_all(STREAM_MAGIC).is_err() { eprintln!("Erro de escrita"); return; }
+
+    let mut buf = vec![0u8; STREAM_BLOCK];
+    let mut orig_total: usize = 0;
+    let mut comp_total: usize = STREAM_MAGIC.len();
+    loop {
+        let mut filled = 0;
+        while filled < STREAM_BLOCK {
+            match fin.read(&mut buf[filled..]) {
+                Ok(0) => break,
+                Ok(n) => filled += n,
+                Err(e) => { eprintln!("Erro de leitura: {}", e); return; }
+            }
+        }
+        if filled == 0 { break; }
+        orig_total += filled;
+        let mut e = GhostPredictEngine::new();
+        let comp = e.compress_stream(&buf[..filled]);
+        let len = comp.len() as u32;
+        if fout.write_all(&len.to_le_bytes()).is_err() || fout.write_all(&comp).is_err() {
+            eprintln!("Erro ao escrever bloco"); return;
+        }
+        comp_total += 4 + comp.len();
+        if filled < STREAM_BLOCK { break; }
+    }
+    let _ = fout.write_all(&0u32.to_le_bytes());
+    comp_total += 4;
+
+    let dt = start.elapsed().as_secs_f64();
+    let ratio = if orig_total > 0 { (1.0 - comp_total as f64 / orig_total as f64) * 100.0 } else { 0.0 };
+    println!("stream: {} -> {} bytes  ({:.1}%)  {:.2}s  | blocos de {} MB, RAM ~constante",
+             orig_total, comp_total, ratio, dt, STREAM_BLOCK / 1024 / 1024);
+}
+
+fn decompress_stream_file_cmd(input_path: &str, output_path: &str) {
+    let mut fin = match File::open(input_path) {
+        Ok(f) => f, Err(e) => { eprintln!("Erro ao abrir entrada: {}", e); return; }
+    };
+    let mut fout = match File::create(output_path) {
+        Ok(f) => f, Err(e) => { eprintln!("Erro ao criar saida: {}", e); return; }
+    };
+    let mut magic = [0u8; 5];
+    if fin.read_exact(&mut magic).is_err() || &magic != STREAM_MAGIC {
+        eprintln!("Erro: nao e um container GPA stream (.gpas)"); return;
+    }
+    let mut total: usize = 0;
+    loop {
+        let mut lenb = [0u8; 4];
+        if fin.read_exact(&mut lenb).is_err() { break; }
+        let len = u32::from_le_bytes(lenb) as usize;
+        if len == 0 { break; }
+        let mut comp = vec![0u8; len];
+        if fin.read_exact(&mut comp).is_err() { eprintln!("Erro ao ler bloco"); return; }
+        let mut e = GhostPredictEngine::new();
+        let out = e.decompress_stream(comp);
+        if fout.write_all(&out).is_err() { eprintln!("Erro de escrita"); return; }
+        total += out.len();
+    }
+    println!("stream-dec: {} bytes restaurados", total);
 }
 
 fn compress_file_cmd(input_path: &str, output_path: &str) {
