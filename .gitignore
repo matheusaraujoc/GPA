@@ -15,4 +15,20 @@ block_orch.py
 bench.py
 relatorio_testes.md
 unishox/
-dados_reais/
+datasets/
+
+# Backup / emulador / auxiliares (fora do repositorio do algoritmo)
+Revisão/
+revisão/
+qemu-complete/
+qemu*/
+primer_mqtt_exp.bin
+analise.md
+download_gutenberg.py
+resultados_quick.json
+cross_quick.json
+
+# Saidas de build C / ESP-IDF
+embedded/build/
+*.o
+gpa_host.exe
