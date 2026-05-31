@@ -1,0 +1,37 @@
+{
+  "MQTT": {
+    "MQTT": 18.18,
+    "AIS": 46.33,
+    "IntelLab": 56.75,
+    "Geolife": 46.9,
+    "Log-Apache": 52.41
+  },
+  "AIS": {
+    "MQTT": 91,
+    "AIS": 43.21,
+    "IntelLab": 92.16,
+    "Geolife": 78.25,
+    "Log-Apache": 95.91
+  },
+  "IntelLab": {
+    "MQTT": 54.09,
+    "AIS": 46.73,
+    "IntelLab": 26.14,
+    "Geolife": 47.23,
+    "Log-Apache": 50.15
+  },
+  "Geolife": {
+    "MQTT": 49.16,
+    "AIS": 42.52,
+    "IntelLab": 51.55,
+    "Geolife": 23.71,
+    "Log-Apache": 56.24
+  },
+  "Log-Apache": {
+    "MQTT": 99.14,
+    "AIS": 97.29,
+    "IntelLab": 102.03,
+    "Geolife": 103.2,
+    "Log-Apache": 9.82
+  }
+}
