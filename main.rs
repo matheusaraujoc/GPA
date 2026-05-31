@@ -285,18 +285,19 @@ fn bench_cmd(input_path: &str, iters: u32) {
     );
 }
 
-// Suíte de conformidade (formato v10.3: streaming, ZERO-OVERHEAD, sem flag/stored).
+// Suíte de conformidade (formato v12: streaming + flag enviesada / nunca inflar).
 // Criterios de aprovacao por caso:
 //   1. Round-trip lossless (integridade) -- OBRIGATORIO.
-//   2. Tamanho gerado == tamanho de referencia (guarda de regressao).
+//   2. Nunca inflar de forma relevante (modo stored) -- comp <= orig + ~0.1% + 4 B.
+//   3. Tamanho gerado == tamanho de referencia (guarda de regressao).
 fn run_conformance_tests() {
-    println!("\n=== BATERIA DE CONFORMIDADE v10.3 (streaming, zero-overhead) ===");
+    println!("\n=== BATERIA DE CONFORMIDADE v12 (streaming, flag enviesada / nunca inflar) ===");
 
     let test_cases = vec!(
         ("Input Vazio", vec![], 1),
         ("Literal Único", vec![b'A'], 2),
         ("Hello World!", b"Hello World!".to_vec(), 13),
-        ("Range Completo 256", (0..=255u8).collect::<Vec<u8>>(), 285),
+        ("Range Completo 256", (0..=255u8).collect::<Vec<u8>>(), 259),
         ("Repetição Curta (b'A' * 100)", vec![b'A'; 100], 6),
         ("Payload IoT JSON Complexo", {
             let base = b"{\"sensor_id\":42,\"temp\":23.5,\"hum\":60}";
@@ -326,7 +327,14 @@ fn run_conformance_tests() {
             continue;
         }
 
-        // 2. Regressao de tamanho
+        // 2. Nunca inflar de forma relevante (garantia do modo stored)
+        if actual_size > raw_input.len() + 4 + raw_input.len() / 64 {
+            println!("FALHOU! Inflou demais: {} B de {} B", actual_size, raw_input.len());
+            passed_all = false;
+            continue;
+        }
+
+        // 3. Regressao de tamanho
         if actual_size != expected_gpa_size {
             println!("ATENCAO: round-trip OK, mas tamanho {} B difere da referencia ({} B)",
                      actual_size, expected_gpa_size);
@@ -334,13 +342,13 @@ fn run_conformance_tests() {
             continue;
         }
 
-        println!("PASSOU ({} B, integro)", actual_size);
+        println!("PASSOU ({} B, integro, sem inflar)", actual_size);
     }
 
     println!("============================================================");
     if passed_all {
         println!("  RESULTADO FINAL: TODOS OS TESTES PASSARAM COM SUCESSO!");
-        println!("  Conformidade v10.3: lossless + zero-overhead + tamanhos de referencia.");
+        println!("  Conformidade v12: lossless + nunca inflar + tamanhos de referencia.");
     } else {
         println!("  RESULTADO FINAL: ALGUNS TESTES FALHARAM. VERIFIQUE A LÓGICA.");
     }

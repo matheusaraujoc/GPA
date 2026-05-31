@@ -15,6 +15,12 @@ pub const ALPHABET_SIZE: usize = 18;
 pub const EOF_SYMBOL: usize     = 16;
 pub const MATCH_SYMBOL: usize   = 17;
 
+// v12 — flag de modo ENVIESADA (nunca inflar). Primeira decisao do stream aritmetico:
+// is_stored ocupa o intervalo [FLAG_STORED_LOW, FLAG_TOTAL) = 1/64. Comprimido custa
+// ~log2(64/63) ≈ 0.02 bit (quase free); stored custa ~6 bits + coding flat.
+pub const FLAG_TOTAL: u16      = 64;
+pub const FLAG_STORED_LOW: u16 = 63;
+
 pub const LZ_WINDOW: usize       = 32768;  // janela "stream" (gateways/arquivos grandes) e teto maximo
 pub const LZ_WINDOW_MICRO: usize = 4096;   // v10.2: janela "micro" p/ payloads <= 4 KB (RAM minima, zero perda de ratio)
 pub const LZ_MIN_MATCH: usize   = 4;
@@ -846,18 +852,31 @@ impl GhostPredictEngine {
     /// stream aritmetico, como no v9. Otimizado para o nicho de micro-payloads
     /// compressiveis; dados incompressiveis (ruido) podem inflar (teto de Shannon).
     pub fn compress_stream(&mut self, raw: &[u8]) -> Vec<u8> {
+        // Caminho COMPRIMIDO: flag enviesada (is_stored=0, ~0.02 bit) + stream LZ/PPM.
         let mut writer = BitWriter::new();
         let mut coder = ArithmeticCoder::new();
-        // Auto-seleciona o perfil de janela pelo tamanho do input:
-        //  - payload <= 4 KB (nicho-alvo): janela micro (4 KB) -> RAM minima, SEM perda de
-        //    ratio (num arquivo de 4 KB nenhuma distancia pode passar de 4 KB);
-        //  - acima disso: janela stream (32 KB) -> captura repeticoes de longo alcance.
-        // O decodificador independe da janela, entao isso e 100% compativel com o formato.
+        coder.encode(0, FLAG_STORED_LOW, FLAG_TOTAL, &mut writer); // is_stored = 0
+        // Auto-seleciona o perfil de janela pelo tamanho do input (micro 4 KB / stream 32 KB).
         let window = if raw.len() <= LZ_WINDOW_MICRO { LZ_WINDOW_MICRO } else { LZ_WINDOW };
         let mut lz = LZ77::new(window);
         lz.parse_streaming(raw, |tok| self.encode_token(tok, &mut coder, &mut writer));
         coder.finish(&mut writer);
-        writer.bytes
+        let comp = writer.bytes;
+        if comp.len() <= raw.len() + 1 {
+            return comp;
+        }
+        // INFLOU -> STORED: flag is_stored=1 + bytes em modelo flat (257) + EOF. Saida ~raw+3,
+        // garantindo que dados incompressiveis nunca inflam de forma relevante.
+        let mut w2 = BitWriter::new();
+        let mut c2 = ArithmeticCoder::new();
+        c2.encode(FLAG_STORED_LOW, FLAG_TOTAL, FLAG_TOTAL, &mut w2); // is_stored = 1
+        for &b in raw {
+            c2.encode(b as u16, b as u16 + 1, 257, &mut w2);
+        }
+        c2.encode(256, 257, 257, &mut w2); // EOF do fluxo flat
+        c2.finish(&mut w2);
+        let stored = w2.bytes;
+        if stored.len() < comp.len() { stored } else { comp }
     }
 
     /// Decodifica UM simbolo principal (PPM) + atualiza modelos. Compartilhado pelos
@@ -1035,6 +1054,24 @@ impl GhostPredictEngine {
         }
         let mut reader = BitReader::new(payload);
         let mut decoder = ArithmeticDecoder::new(&mut reader);
+
+        // Le a flag de modo enviesada.
+        if decoder.get_target(FLAG_TOTAL) >= FLAG_STORED_LOW {
+            decoder.decode(FLAG_STORED_LOW, FLAG_TOTAL, FLAG_TOTAL, &mut reader); // STORED
+            let mut out: Vec<u8> = Vec::new();
+            loop {
+                let t = decoder.get_target(257);
+                if t == 256 {
+                    decoder.decode(256, 257, 257, &mut reader);
+                    break;
+                }
+                decoder.decode(t, t + 1, 257, &mut reader);
+                out.push(t as u8);
+            }
+            return out;
+        }
+        decoder.decode(0, FLAG_STORED_LOW, FLAG_TOTAL, &mut reader); // COMPRIMIDO
+
         let mut out: Vec<u8> = Vec::new();
         let mut nibble_hi: Option<u8> = None;
 

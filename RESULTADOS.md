@@ -132,7 +132,7 @@ Engine frio, dados não-repetitivos crescentes:
 - **Sem prior, perde para o Unishox2** no minúsculo (cold-start).
 - **Prosa livre / idioma fora do primer:** Unishox vence.
 - **Dados gerais grandes:** classe-gzip; perde para zstd/brotli/lzma (janela 32 KB).
-- **Incompressível:** infla (sem *stored*).
+- **Incompressível:** inflação limitada a ~0,1% (modo stored via flag enviesada, v12).
 - **RAM = tamanho do arquivo**; **velocidade ~7 MB/s** — limita arquivos muito grandes.
 
 ### Posicionamento honesto
