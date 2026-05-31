@@ -33,7 +33,7 @@ pub const LEN_EXTRA: [u32; 7]  = [0, 0, 1, 2,  3,  4,  5];
 pub const DIST_CODE_SIZE: usize = 3 + DIST_BUCKETS; // 16
 pub const LEN_CODE_SIZE: usize  = 1 + LEN_BUCKETS;  // 8
 
-pub const ASCII_PRIOR: [u32; 18] = [
+pub const ASCII_PRIOR: [u16; 18] = [
     1, 2, 2, 2, 2, 2, 2, 2,
     1, 1, 1, 1, 1, 1, 1, 1,
     1, 1,
@@ -161,7 +161,7 @@ impl ArithmeticCoder {
         }
     }
 
-    pub fn encode(&mut self, low_count: u32, high_count: u32, total_count: u32, writer: &mut BitWriter) {
+    pub fn encode(&mut self, low_count: u16, high_count: u16, total_count: u16, writer: &mut BitWriter) {
         let range = (self.high as u64) - (self.low as u64) + 1;
         self.high = self.low + (((range * (high_count as u64)) / (total_count as u64)) as u32) - 1;
         self.low = self.low + (((range * (low_count as u64)) / (total_count as u64)) as u32);
@@ -185,7 +185,7 @@ impl ArithmeticCoder {
         }
     }
 
-    pub fn encode_bit(&mut self, bit: u32, writer: &mut BitWriter) {
+    pub fn encode_bit(&mut self, bit: u16, writer: &mut BitWriter) {
         self.encode(bit, bit + 1, 2, writer);
     }
 
@@ -227,12 +227,12 @@ impl ArithmeticDecoder {
         }
     }
 
-    pub fn get_target(&self, total_count: u32) -> u32 {
+    pub fn get_target(&self, total_count: u16) -> u16 {
         let range = (self.high as u64) - (self.low as u64) + 1;
-        ((((self.value as u64) - (self.low as u64) + 1) * (total_count as u64) - 1) / range) as u32
+        ((((self.value as u64) - (self.low as u64) + 1) * (total_count as u64)  - 1) / range) as u16
     }
 
-    pub fn decode(&mut self, low_count: u32, high_count: u32, total_count: u32, reader: &mut BitReader) {
+    pub fn decode(&mut self, low_count: u16, high_count: u16, total_count: u16, reader: &mut BitReader) {
         let range = (self.high as u64) - (self.low as u64) + 1;
         self.high = self.low + (((range * (high_count as u64)) / (total_count as u64)) as u32) - 1;
         self.low = self.low + (((range * (low_count as u64)) / (total_count as u64)) as u32);
@@ -257,9 +257,9 @@ impl ArithmeticDecoder {
         }
     }
 
-    pub fn decode_bit(&mut self, reader: &mut BitReader) -> u32 {
+    pub fn decode_bit(&mut self, reader: &mut BitReader) -> u16 {
         let target = self.get_target(2);
-        let bit = if target >= 1 { 1 } else { 0 };
+        let bit: u16 = if target >= 1 { 1 } else { 0 };
         self.decode(bit, bit + 1, 2, reader);
         bit
     }
@@ -470,21 +470,21 @@ impl LZ77 {
 // ============================================================================
 pub struct GhostPredictEngine {
     // Principal PPM
-    graph: Box<[[u32; ALPHABET_SIZE]; 256]>,
-    graph_cum: Box<[[u32; ALPHABET_SIZE + 1]; 256]>,
-    graph_totals: [u32; 256],
-    o0_counts: [u32; ALPHABET_SIZE],
-    o0_cum: [u32; ALPHABET_SIZE + 1],
+    graph: Box<[[u16; ALPHABET_SIZE]; 256]>,
+    graph_cum: Box<[[u16; ALPHABET_SIZE + 1]; 256]>,
+    graph_totals: [u16; 256],
+    o0_counts: [u16; ALPHABET_SIZE],
+    o0_cum: [u16; ALPHABET_SIZE + 1],
     current_node: usize,
 
     // Dist Modelo
-    dist_code_counts: [u32; DIST_CODE_SIZE],
-    dist_code_cum: [u32; DIST_CODE_SIZE + 1],
+    dist_code_counts: [u16; DIST_CODE_SIZE],
+    dist_code_cum: [u16; DIST_CODE_SIZE + 1],
     last_offsets: [usize; 3],
 
     // Len Modelo
-    len_code_counts: [u32; LEN_CODE_SIZE],
-    len_code_cum: [u32; LEN_CODE_SIZE + 1],
+    len_code_counts: [u16; LEN_CODE_SIZE],
+    len_code_cum: [u16; LEN_CODE_SIZE + 1],
     last_length: usize,
 }
 
@@ -501,13 +501,13 @@ impl GhostPredictEngine {
         // Inicializa dist_code
         let mut dist_code_cum = [0; DIST_CODE_SIZE + 1];
         for i in 0..=DIST_CODE_SIZE {
-            dist_code_cum[i] = i as u32;
+            dist_code_cum[i] = i as u16;
         }
 
         // Inicializa len_code
         let mut len_code_cum = [0; LEN_CODE_SIZE + 1];
         for i in 0..=LEN_CODE_SIZE {
-            len_code_cum[i] = i as u32;
+            len_code_cum[i] = i as u16;
         }
 
         GhostPredictEngine {
@@ -592,7 +592,7 @@ impl GhostPredictEngine {
 
             // Aprendizado Ordem-0
             self.o0_counts[symbol] += 1;
-            if self.o0_counts.iter().sum::<u32>() >= 2048 {
+            if self.o0_counts.iter().map(|&x| x as u32).sum::<u32>() >= 2048 {
                 for s in 0..ALPHABET_SIZE {
                     self.o0_counts[s] = (self.o0_counts[s] >> 1) | 1;
                 }
@@ -623,7 +623,7 @@ impl GhostPredictEngine {
                 coder.encode(self.dist_code_cum[dist_code], self.dist_code_cum[dist_code + 1], self.dist_code_cum[DIST_CODE_SIZE], writer);
                 
                 self.dist_code_counts[dist_code] += 1;
-                if self.dist_code_counts.iter().sum::<u32>() >= 2048 {
+                if self.dist_code_counts.iter().map(|&x| x as u32).sum::<u32>() >= 2048 {
                     for s in 0..DIST_CODE_SIZE {
                         self.dist_code_counts[s] = (self.dist_code_counts[s] >> 1) | 1;
                     }
@@ -640,7 +640,7 @@ impl GhostPredictEngine {
                     let extra_bits = DIST_EXTRA[db];
                     let extra = dist - DIST_BASE[db];
                     for b in (0..extra_bits).rev() {
-                        coder.encode_bit(((extra >> b) & 1) as u32, writer);
+                        coder.encode_bit(((extra >> b) & 1) as u16, writer);
                     }
                 }
                 mtf_offsets(&mut self.last_offsets, dist);
@@ -655,7 +655,7 @@ impl GhostPredictEngine {
                 coder.encode(self.len_code_cum[len_code], self.len_code_cum[len_code + 1], self.len_code_cum[LEN_CODE_SIZE], writer);
                 
                 self.len_code_counts[len_code] += 1;
-                if self.len_code_counts.iter().sum::<u32>() >= 2048 {
+                if self.len_code_counts.iter().map(|&x| x as u32).sum::<u32>() >= 2048 {
                     for s in 0..LEN_CODE_SIZE {
                         self.len_code_counts[s] = (self.len_code_counts[s] >> 1) | 1;
                     }
@@ -672,7 +672,7 @@ impl GhostPredictEngine {
                     let extra_bits = LEN_EXTRA[lb];
                     let extra = len - LEN_BASE[lb];
                     for b in (0..extra_bits).rev() {
-                        coder.encode_bit(((extra >> b) & 1) as u32, writer);
+                        coder.encode_bit(((extra >> b) & 1) as u16, writer);
                     }
                 }
                 self.last_length = len;
@@ -715,7 +715,7 @@ impl GhostPredictEngine {
         }
 
         self.o0_counts[symbol] += 1;
-        if self.o0_counts.iter().sum::<u32>() >= 2048 {
+        if self.o0_counts.iter().map(|&x| x as u32).sum::<u32>() >= 2048 {
             for s in 0..ALPHABET_SIZE {
                 self.o0_counts[s] = (self.o0_counts[s] >> 1) | 1;
             }
@@ -740,7 +740,7 @@ impl GhostPredictEngine {
                 3 + bucket_dist(dist)
             };
             self.dist_code_counts[dist_code] += 1;
-            if self.dist_code_counts.iter().sum::<u32>() >= 2048 {
+            if self.dist_code_counts.iter().map(|&x| x as u32).sum::<u32>() >= 2048 {
                 for s in 0..DIST_CODE_SIZE {
                     self.dist_code_counts[s] = (self.dist_code_counts[s] >> 1) | 1;
                 }
@@ -759,7 +759,7 @@ impl GhostPredictEngine {
                 1 + bucket_len(len)
             };
             self.len_code_counts[len_code] += 1;
-            if self.len_code_counts.iter().sum::<u32>() >= 2048 {
+            if self.len_code_counts.iter().map(|&x| x as u32).sum::<u32>() >= 2048 {
                 for s in 0..LEN_CODE_SIZE {
                     self.len_code_counts[s] = (self.len_code_counts[s] >> 1) | 1;
                 }
@@ -942,7 +942,7 @@ impl GhostPredictEngine {
 
         // Aprendizado Ordem-0
         self.o0_counts[symbol] += 1;
-        if self.o0_counts.iter().sum::<u32>() >= 2048 {
+        if self.o0_counts.iter().map(|&x| x as u32).sum::<u32>() >= 2048 {
             for s in 0..ALPHABET_SIZE {
                 self.o0_counts[s] = (self.o0_counts[s] >> 1) | 1;
             }
@@ -967,7 +967,7 @@ impl GhostPredictEngine {
         decoder.decode(self.dist_code_cum[dist_code], self.dist_code_cum[dist_code + 1], self.dist_code_cum[DIST_CODE_SIZE], reader);
 
         self.dist_code_counts[dist_code] += 1;
-        if self.dist_code_counts.iter().sum::<u32>() >= 2048 {
+        if self.dist_code_counts.iter().map(|&x| x as u32).sum::<u32>() >= 2048 {
             for s in 0..DIST_CODE_SIZE {
                 self.dist_code_counts[s] = (self.dist_code_counts[s] >> 1) | 1;
             }
@@ -1000,7 +1000,7 @@ impl GhostPredictEngine {
         decoder.decode(self.len_code_cum[len_code], self.len_code_cum[len_code + 1], self.len_code_cum[LEN_CODE_SIZE], reader);
 
         self.len_code_counts[len_code] += 1;
-        if self.len_code_counts.iter().sum::<u32>() >= 2048 {
+        if self.len_code_counts.iter().map(|&x| x as u32).sum::<u32>() >= 2048 {
             for s in 0..LEN_CODE_SIZE {
                 self.len_code_counts[s] = (self.len_code_counts[s] >> 1) | 1;
             }

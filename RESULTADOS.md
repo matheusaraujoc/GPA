@@ -109,9 +109,13 @@ Engine frio, dados não-repetitivos crescentes:
 - **RAM ≈ tamanho do arquivo** — a engine carrega o arquivo inteiro na memória (`Vec`). É o gargalo para arquivos muito grandes.
 - **Velocidade ~7 MB/s constante** (codificador aritmético bit-a-bit). 1 GB ≈ ~2,3 min.
 
-**Footprint da engine (heap, via tracking allocator):**
-- **Decodificador:** ~**37 KB** (só as tabelas do grafo PPM) até 4 KB — não usa tabelas LZ. Viável em ESP32/STM32.
-- **Codificador:** ~117 KB (janela micro 4 KB) a ~232 KB (janela stream 32 KB) — inclui as tabelas LZ.
+**Footprint da engine (heap de trabalho, via tracking allocator, micro-payload):**
+- **Decodificador:** ~**19 KB** (só o grafo PPM, agora em `u16`) — não usa tabelas LZ. Viável em ESP32/STM32.
+- **Codificador:** ~**99 KB** (janela micro) — dominado pela tabela hash LZ (`head`, 64 KB em `i32`).
+
+> **Otimização de memória (output-neutral).** Os contadores do modelo são limitados a 2048 (limiar de rescale), então cabem em `u16`. O grafo PPM + cumulativos foram migrados de `u32`→`u16`, **halvando o modelo sem mudar o `.gpa`** (bit-idêntico; conformidade inalterada). Isso cortou o **decodificador de ~37 KB → ~19 KB**.
+>
+> **Teto medido (micro-payload, ≤ 4 KB):** usando também `i16` nas posições LZ (válido só p/ ≤ 4 KB, onde as posições ≤ 4095 cabem) + hash menor, o **codificador desce a ~35 KB** e o decodificador idem ~19 KB, **sem perda de ratio** (round-trip verificado). O `i16` LZ é micro-específico (posições > 32767 estouram), então fica como otimização opcional gated por tamanho — não integrada para manter o caminho normal seguro em qualquer tamanho.
 
 ---
 
