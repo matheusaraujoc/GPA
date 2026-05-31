@@ -1,135 +1,292 @@
-# GhostPredict — GPA (Ghost Predict Algorithm)
+# GhostPredict (GPA)
 
-Compressor **lossless** especializado em **micro-payloads** (32 B – 4 KB): IoT, MQTT, telemetria, sensores, mensagens curtas.
+**Compressor lossless com prior embutido no codec, especializado em micro-payloads de IoT.**
 
-> **A tese:** o GPA não é um compressor universal. É um **especialista em mensagens pequenas**, onde consegue a melhor relação entre compressão, latência e simplicidade — o nicho em que os compressores de propósito geral (gzip, zstd, lz4) **incham** em vez de comprimir.
+O GhostPredict é um compressor de dados sem perdas desenhado para um regime que os compressores
+de uso geral atendem mal: mensagens muito curtas, de dezenas de bytes, típicas de telemetria de
+IoT (MQTT, CoAP, LoRaWAN, NB-IoT). Nesse regime, gzip, zstd e brotli costumam **aumentar** o
+tamanho do dado, porque o custo fixo de cabeçalho e enquadramento supera qualquer economia.
 
----
+A tese do projeto, sustentada por experimentos em onze conjuntos de dados reais, é simples e
+mensurável: **compartilhar um prior de domínio no firmware, e não no arquivo, é vantajoso para
+micro-payloads.** O prior aquece o modelo estatístico e serve de dicionário, sem que o arquivo
+comprimido carregue qualquer dicionário ou cabeçalho.
 
-## Por que ele existe
+| | |
+|---|---|
+| Resultado central | menor arquivo entre todos os concorrentes no nicho; ~1,7× sobre o dicionário enxuto do zstd (modelo isolado), até ~3× sobre o dicionário padrão |
+| Garantia | nunca expande a entrada além de ~0,1% (modo de armazenamento) |
+| Footprint | decodificador ~19 KB de RAM, compressor ~51 KB; primer 16–32 KB de flash |
+| Integridade | lossless, determinístico, bit a bit exato (suíte de conformidade) |
 
-Para payloads minúsculos, os compressores tradicionais **aumentam** o tamanho: o overhead de cabeçalho/framing supera qualquer economia. O GPA foi desenhado para o oposto — **zero header** (o `.gpa` é puramente o stream aritmético) — e é o único que **comprime** uma mensagem de 30 B em vez de inflá-la.
-
-```
-{"device":"A23","ts":1700044556,"status":"OK","temp":27.1}   (58 B)
-  gzip-9 ........ 62 B   (inflou)
-  Unishox2 ...... 42 B
-  GPA (frio) .... 51 B
-  GPA (primed) .. 13 B   ◄── com prior de domínio
-```
-
----
-
-## A inovação: modo *primed* (prior embutido)
-
-O diferencial do GPA é o **modo primed**: um **corpus de domínio embutido no próprio codec** (`primer.bin`, via `include_bytes!`) que:
-
-1. **aquece** o modelo estatístico (PPM) — ele já começa "conhecendo" a forma das suas mensagens, eliminando o *cold-start* que limita qualquer compressor numa mensagem fria;
-2. serve de **dicionário LZ** — substrings comuns (`{"device":"`, `,"status":"OK"`) viram *matches* baratos.
-
-O ponto crucial: **o prior vive no codec, não no arquivo.** O `.gpa` continua **sem dicionário embutido** — encoder e decoder usam o mesmo primer (enviado uma vez com o firmware). Cada arquivo permanece zero-overhead.
-
-**Resultado (held-out, dados sintéticos de domínio):** o GPA-primed **bate o `zstd --train` (dicionário) em ~2×** e **vence o Unishox2** em texto curto estruturado, mantendo o arquivo livre de dicionário. Ver [RESULTADOS.md](RESULTADOS.md).
+A análise completa está em **[artigo/](artigo/)** (artigo no padrão SBC e documentação técnica
+detalhada, ambos em `.docx` e `.pdf`).
 
 ---
 
-## Como funciona (resumo)
+## Sumário
 
-```
-bytes  →  LZ77 (janela auto 4 KB micro / 32 KB stream, posições i32)
-       →  stream de tokens (nibbles + matches dist/len)
-       →  PPM Ordem-2 sobre nibbles + modelos Dist/Len (offset history + buckets)
-       →  codificador aritmético inteiro de 32 bits
-       →  .gpa  (sem header, sem trailer, sem checksum)
-```
-
-- **Streaming:** processa token a token, sem materializar o stream — RAM ~constante.
-- **Determinístico:** aritmética inteira, bit-exato em qualquer arquitetura.
-- **Modo primed:** o primer aquece o modelo + dicionário LZ antes de codificar a mensagem.
-
-Especificação completa e independente de linguagem: [spec.md](spec.md).
+- [Início rápido](#início-rápido)
+- [Compilação](#compilação)
+- [Manual de uso](#manual-de-uso)
+  - [CLI do motor (main.exe)](#1-cli-do-motor-mainexe)
+  - [Gerador de primer (gen_primer.py)](#2-gerador-de-primer-gen_primerpy)
+  - [Interface gráfica (app.py)](#3-interface-gráfica-apppy)
+  - [Benchmark de validação (benchmark.py)](#4-benchmark-de-validação-benchmarkpy)
+- [Como o algoritmo funciona](#como-o-algoritmo-funciona)
+- [Reprodução da validação](#reprodução-da-validação)
+- [Resultados](#resultados)
+- [Estrutura do repositório](#estrutura-do-repositório)
+- [Limites](#limites)
 
 ---
 
-## Uso
+## Início rápido
 
-### CLI (Rust)
+```sh
+# 1. compilar o motor (Windows, toolchain GNU)
+rustc +stable-x86_64-pc-windows-gnu -C opt-level=3 main.rs -o main.exe
 
-Compilar (Windows, toolchain **GNU** — o MSVC falha no link neste ambiente):
+# 2. verificar a corretude (suíte de conformidade, round-trip bit a bit)
+main.exe t
+
+# 3. comprimir e descomprimir uma mensagem
+main.exe c   mensagem.json   mensagem.gpa     # comprime (nunca infla)
+main.exe d   mensagem.gpa    saida.json       # descomprime
+
+# 4. comprimir COM prior de domínio (a inovação)
+main.exe cp  mensagem.json   mensagem.gpa     # usa o primer embutido (primer.bin)
+main.exe dp  mensagem.gpa    saida.json
+```
+
+---
+
+## Compilação
+
+### Motor (obrigatório)
+
+O motor é Rust puro, sem dependências externas, compilado por um único comando. No Windows usa-se
+a cadeia **GNU**, pois o ligador MSVC falha neste projeto.
 
 ```sh
 rustc +stable-x86_64-pc-windows-gnu -C opt-level=3 main.rs -o main.exe
 ```
 
+O `primer.bin` é embutido no binário em tempo de compilação (`include_bytes!`). Trocar o prior
+significa substituir `primer.bin` e recompilar.
+
+### Ferramentas de comparação (apenas para o benchmark)
+
+O `benchmark.py` compara o GPA com especialistas de string curta. Compile-os uma vez:
+
 ```sh
-main.exe c  entrada      saida.gpa     # comprimir (nunca inflar; flag enviesada ~0 bit)
-main.exe d  entrada.gpa  saida         # descomprimir
-main.exe cp entrada      saida.gpa     # comprimir COM prior embutido (primed)
-main.exe dp entrada.gpa  saida         # descomprimir primed
-main.exe cs entrada      saida.gpas    # comprimir em STREAMING (blocos, RAM limitada)
-main.exe ds entrada.gpas saida         # descomprimir streaming
-main.exe t                             # suíte de conformidade (round-trip bit-exato)
-main.exe bench arquivo [iters]         # benchmark in-memory (tempo + heap da engine)
+cd tools/short
+gcc -O2 -o uni_cli.exe  uni_cli.c  unishox2.c
+gcc -O2 -o smaz_cli.exe smaz_cli.c smaz.c
 ```
 
-### GUI (Python)
+O benchmark também usa `zstd`, `xz`, `gzip` e `brotli` no PATH, e o pacote Python `psutil`
+(opcional, para medir memória).
+
+---
+
+## Manual de uso
+
+### 1. CLI do motor (main.exe)
+
+O arquivo comprimido (`.gpa`) é puramente o fluxo aritmético, sem cabeçalho. Comandos:
+
+| Comando | Função |
+|---|---|
+| `c   entrada saida.gpa` | Comprimir. Seleciona o perfil de janela pelo tamanho e garante nunca inflar. |
+| `d   entrada.gpa saida` | Descomprimir. |
+| `cp  entrada saida.gpa` | Comprimir **com prior** embutido no binário (`primer.bin`). |
+| `dp  entrada.gpa saida` | Descomprimir com o prior embutido. |
+| `cpf entrada saida.gpa primer` | Comprimir com prior lido de um **arquivo** (sem recompilar). |
+| `dpf entrada.gpa saida primer` | Descomprimir com prior de arquivo. |
+| `cs  entrada saida.gpas` | Comprimir em **fluxo de blocos** (RAM limitada, arquivos grandes). |
+| `ds  entrada.gpas saida` | Descomprimir fluxo de blocos. |
+| `t` | Suíte de **conformidade** (round-trip bit a bit + nunca inflar + tamanhos de referência). |
+| `bench entrada [iters]` | Benchmark **em memória**: tempo e pico de heap do motor. |
+
+**Importante sobre o modo com prior:** o `.gpa` gerado por `cp`/`cpf` contém apenas a mensagem;
+o primer não vai no arquivo. A descompressão (`dp`/`dpf`) **exige o mesmo primer** usado na
+compressão, byte a byte. Encoder e decoder compartilham o primer, distribuído uma vez com o
+firmware.
+
+Exemplo do efeito do prior (mensagem MQTT real de 69 bytes):
+
+```
+1725866030.472465,0x0018,...,2,dos          (69 B)
+  GPA sem prior (c)  .... 42 B
+  zstd --train (dict) ... 43 B
+  Unishox2 .............. 35 B
+  GPA com prior (cp) .... 16 B   ◄── prior de domínio casado
+```
+
+### 2. Gerador de primer (gen_primer.py)
+
+O primer é um corpus bruto de amostras representativas do domínio, uma por linha. O
+`gen_primer.py` o constrói em três modos:
+
+```sh
+# de um dataset (held-out: reserva as primeiras N de teste, usa as seguintes como treino)
+python gen_primer.py --from-dataset datasets/.../loop_1.csv --skip-header --cap 32768
+
+# corpus genérico sintético e determinístico (texto curto estruturado)
+python gen_primer.py --synthetic --cap 16384
+
+# concatenando arquivos de amostras seus
+python gen_primer.py --from-files urls.txt jsons.txt --out primer.bin
+```
+
+Após gerar um novo `primer.bin`, **recompile o motor** para embuti-lo. Detalhes de
+dimensionamento: todo o corpus aquece o modelo PPM, mas só os **últimos 32 KB** (a janela do LZ)
+servem de dicionário, por isso o corte padrão em 32 KB.
+
+### 3. Interface gráfica (app.py)
 
 ```sh
 python app.py
 ```
 
-A GUI compila a engine Rust automaticamente e expõe compressão/extração nos três modos: normal (`.gpa`), *primed* (com prior) e *streaming* (`.gpas`, RAM limitada).
+A GUI (Tkinter) compila o motor automaticamente e expõe os três modos: normal (`.gpa`), com prior
+(`.gpa`) e streaming (`.gpas`), cada um com botões de comprimir e extrair. Útil para uso manual
+sem a linha de comando.
 
-### Trocar o prior
+### 4. Benchmark de validação (benchmark.py)
 
-O `primer.bin` é um corpus representativo do seu domínio. Para especializar: gere um `primer.bin` com amostras das suas mensagens (uma per linha basta) e recompile — o prior é embutido em tempo de build.
+Ponto de entrada para um revisor reproduzir a avaliação. Verifica os pré-requisitos
+automaticamente e imprime uma tabela-resumo.
+
+```sh
+python benchmark.py --quick     # ~minutos: 3 domínios, 50 mensagens (sanidade)
+python benchmark.py             # completo: 11 domínios, 1000 mensagens (~1 h)
+python benchmark.py --no-cross  # pula o experimento cross-domínio
+```
+
+Saídas: `resultados_reais.json` e `cross_domain.json` (o modo `--quick` escreve em
+`resultados_quick.json` para nunca sobrescrever os resultados canônicos). A partir desses JSON,
+`gen_artigo.py` e `gen_doc.py` regeneram o artigo e a documentação.
 
 ---
 
-## Ganhos e limites
+## Como o algoritmo funciona
 
-### ✅ Onde o GPA ganha
+Pipeline determinístico, processado símbolo a símbolo:
 
-| Cenário | Resultado |
-|---|---|
-| Mensagem única **< ~60 B** (sem prior) | **Único** que comprime; bate gzip/zstd/lz4 (que incham) |
-| Micro-payload **com prior** (primed) | **Bate zstd-dict ~2×** e o Unishox2 em texto curto estruturado |
-| Texto curto estruturado (JSON, URL, log, KV) | Forte, especialmente com prior genérico |
-| Footprint do **decodificador** | ~19 KB (grafo PPM em `u16`) — viável em ESP32/STM32 |
-| **Nunca inflar** (qualquer entrada) | flag enviesada (~0 bit no compressível); incompressível ≤ ~+0,1% |
-| **Arquivos grandes com RAM limitada** | modo streaming `cs`/`ds` (RAM = bloco, não tamanho do arquivo) |
-| Integridade | Lossless, bit-exato, determinístico |
+```
+bytes  →  LZ77 (janela 4 KB micro / 32 KB fluxo)  →  nibbles + matches (dist, len)
+       →  PPM ordem-2 sobre nibbles + modelos de distância e comprimento
+       →  codificador aritmético inteiro de 32 bits
+       →  .gpa (sem cabeçalho, sem rodapé, sem checksum)
+```
 
-### ❌ Onde o GPA perde (limites honestos)
+- **Sem cabeçalho:** o arquivo é só o fluxo aritmético, o que elimina o custo fixo que faz os
+  formatos gerais incharem mensagens curtas.
+- **Nunca inflar:** a primeira decisão codificada é uma flag binária enviesada (1/64) que, no pior
+  caso, ativa um modo de armazenamento direto, limitando a expansão a ~0,1% mais alguns bytes.
+- **Prior embutido:** antes de codificar, encoder e decoder percorrem o primer e aquecem o modelo
+  de forma idêntica; o primer também alimenta o dicionário LZ.
+- **Determinístico:** aritmética inteira, reconstrução bit a bit exata em qualquer arquitetura.
 
-| Limite | Detalhe |
-|---|---|
-| Mensagem minúscula **sem prior** | Perde para o **Unishox2** (codebook hand-tuned vence o cold-start) |
-| **Prosa de linguagem natural** livre | O Unishox2 (modelo de caractere) ainda ganha |
-| **Arquivos grandes** gerais (> ~100 KB) | Classe-gzip; perde para zstd/xz (janela de 32 KB não pega longo alcance) |
-| **Dados incompressíveis** (ruído/cripto) | Não comprimem (≤ ~+0,1% via modo stored), mas também não é o nicho |
-| **RAM em arquivos grandes** | No modo normal (`c`) RAM ≈ tamanho; use `cs`/`ds` para RAM limitada |
-| **Velocidade** | ~7–8 MB/s (codificador aritmético bit-a-bit) — lento para dados grandes |
-| Prior é **específico de domínio** | Um prior genérico cobre texto estruturado amplo; o de domínio maximiza |
+A especificação independente de linguagem está em [spec.md](spec.md). A descrição completa, com
+trechos de código comentados, base matemática e guia de reimplementação, está em
+[artigo/GhostPredict_Documentacao.docx](artigo/).
 
-**Resumo:** o GPA é imbatível no seu nicho (micro-payload, com prior), e não compete fora dele. Análise completa com números em [RESULTADOS.md](RESULTADOS.md).
+---
+
+## Reprodução da validação
+
+### Dados
+
+A pasta `datasets/` não está versionada (é grande; veja `.gitignore`). Para reconstruí-la, baixe
+os conjuntos abaixo e mantenha a estrutura de pastas que o `benchmark.py` espera (ver as funções
+`ex_*` no início do script).
+
+| Domínio | Fonte | Origem |
+|---|---|---|
+| MQTT | MQTTEEB-D | Mendeley Data, DOI 10.17632/jfttfjn6tr |
+| AIS | MarineCadastre AIS | marinecadastre.gov/accessais (NOAA e BOEM) |
+| Sensores | Intel Lab Data | db.csail.mit.edu/labdata/labdata.html |
+| Energia | UCI Household Power | UCI ML Repository, DOI 10.24432/C58K54 |
+| GPS | GeoLife | Microsoft Research (Zheng et al. 2009) |
+| Logs | Loghub | github.com/logpai/loghub (Zhu et al. 2023) |
+| SMS | SMS Spam Collection | UCI ML Repository, DOI 10.24432/C5CC84 |
+| Tweets | Sentiment140 | Go, Bhayani e Huang 2009 (Stanford) |
+
+### Protocolo
+
+Para cada domínio, os registros são embaralhados com semente fixa e divididos em teste e treino
+disjuntos. O treino constrói **tanto** o primer do GPA (últimos 32 KB) **quanto** o dicionário do
+zstd, com as mesmas amostras. Cada mensagem de teste é comprimida individualmente. Medir mensagens
+isoladas, e não arquivos inteiros, é essencial: arquivos diluiriam o custo de partida a frio que o
+prior corrige.
+
+### Passo a passo
+
+```sh
+rustc +stable-x86_64-pc-windows-gnu -C opt-level=3 main.rs -o main.exe   # 1. motor
+main.exe t                                                              # 2. conformidade
+python benchmark.py                                                     # 3. validação (gera JSON)
+python gen_artigo.py && python gen_doc.py                               # 4. artigo e documentação
+```
+
+Sementes fixas tornam o procedimento reproduzível dentro da variação esperada de medição de tempo.
+
+---
+
+## Resultados
+
+Tamanho médio do comprimido por mensagem, com prior casado (1000 mensagens/domínio, held-out):
+
+| Domínio | original | GPA com prior | zstd-dict | fator (lean) |
+|---|---:|---:|---:|---:|
+| Log-Apache | ~84 B | **10 B** | 32 B | 2,3× |
+| MQTT | ~75 B | **18 B** | 42 B | 1,9× |
+| GPS (GeoLife) | ~65 B | **24 B** | 49 B | 1,7× |
+| Sensores | ~64 B | **26 B** | 52 B | 1,7× |
+
+- O GPA com prior produz o **menor arquivo** em todos os domínios, incluindo contra Unishox2 e
+  SMAZ. Sobre o dicionário **enxuto** do zstd (modelo isolado, sem enquadramento), o fator é
+  ~1,3–2,3× (média ~1,7×). Parte do ganho é do modelo, parte da ausência de cabeçalho; o artigo
+  decompõe os dois.
+- **Dependência de domínio:** um primer descasado degrada o resultado em até ~10× (pode inflar).
+  É o limite do método, quantificado no experimento cross-domínio.
+- **Fora do nicho** (arquivos grandes, prosa livre, DNA), o GPA é classe-gzip e não compete; ver
+  [RESULTADOS.md](RESULTADOS.md) e o artigo.
 
 ---
 
 ## Estrutura do repositório
 
-| Arquivo | Papel |
+| Arquivo / pasta | Papel |
 |---|---|
-| `ghost_core.rs` | Engine (LZ77 + PPM + aritmético + modo primed) |
-| `main.rs` | CLI + suíte de conformidade + benchmark |
-| `app.py` | GUI (Tkinter) |
-| `primer.bin` | Prior embutido (corpus de domínio; trocável) |
+| `ghost_core.rs` | **O algoritmo**: LZ77 + PPM + aritmético + prior + nunca-inflar + streaming |
+| `main.rs` | CLI, suíte de conformidade, benchmark em memória, container `.gpas` |
+| `primer.bin` | Prior genérico embutido no motor (trocável; ver `gen_primer.py`) |
+| `gen_primer.py` | Gerador de primer (de dataset, sintético, ou de arquivos) |
+| `app.py` | Interface gráfica (Tkinter) |
+| `benchmark.py` | Validação reproduzível para revisores (gera os JSON) |
+| `gen_artigo.py`, `gen_doc.py` | Geram o artigo e a documentação a partir dos JSON |
+| `tools/short/` | Unishox2 e SMAZ (fontes + drivers) usados como baselines |
+| `embedded/` | Decoder de referência em C (`no_std`, sem alocação) + projeto ESP-IDF; valida o footprint da Tabela 8 com `idf.py size` |
 | `spec.md` | Especificação algorítmica independente de linguagem |
-| `RESULTADOS.md` | Benchmarks consolidados, limites e ganhos em profundidade |
-| `planejamento_de_testes.md` | Plano de testes original |
+| `artigo/` | Artigo (SBC) e documentação técnica completa, em `.docx` e `.pdf` |
+| `RESULTADOS.md` | Síntese de ganhos e limites |
+| `datasets/` | Dados reais da validação (não versionado; ver acima) |
 
 ---
 
-## Status
+## Limites
 
-Engine e modo *primed* **funcionais e validados** (round-trip bit-exato; conformidade 100%). Validação em **dados reais** (logs/IoT) é o próximo passo de pesquisa. Direções futuras documentadas em [RESULTADOS.md](RESULTADOS.md): engine de *context mixing* (mais ratio) e orquestrador de blocos (arquivos grandes com RAM limitada).
+- **Sem prior**, em mensagem minúscula fria, perde para o Unishox2 (codebook hand-tuned).
+- O ganho **depende de um prior casado com o domínio**; um prior genérico ou de outro domínio
+  rende pouco e pode inflar.
+- **Fora do nicho** (dados grandes gerais, prosa livre, DNA), fica na classe do gzip, atrás de
+  zstd, xz e brotli.
+- **Velocidade** ~7 MB/s (codificador aritmético bit a bit), adequada a mensagens curtas, não a
+  grandes volumes.
+
+Análise honesta e completa, com a decomposição do ganho e o trade-off flash/RAM/compressão, no
+artigo e na documentação em [artigo/](artigo/).
