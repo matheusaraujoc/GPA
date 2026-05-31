@@ -100,6 +100,24 @@ fn main() {
             std::fs::write(&args[3], &out).expect("erro escrevendo saida");
             println!("primed-dec: {} bytes", out.len());
         }
+        "cpf" => {
+            if args.len() < 5 { eprintln!("Uso: main.exe cpf [entrada] [saida.gpa] [primer]"); return; }
+            let raw = std::fs::read(&args[2]).expect("erro lendo entrada");
+            let primer = std::fs::read(&args[4]).expect("erro lendo primer");
+            let mut e = GhostPredictEngine::new();
+            let comp = e.compress_primed(&raw, &primer);
+            std::fs::write(&args[3], &comp).expect("erro escrevendo saida");
+            println!("primedf: {} -> {} bytes", raw.len(), comp.len());
+        }
+        "dpf" => {
+            if args.len() < 5 { eprintln!("Uso: main.exe dpf [entrada.gpa] [saida] [primer]"); return; }
+            let payload = std::fs::read(&args[2]).expect("erro lendo entrada");
+            let primer = std::fs::read(&args[4]).expect("erro lendo primer");
+            let mut e = GhostPredictEngine::new();
+            let out = e.decompress_primed(payload, &primer);
+            std::fs::write(&args[3], &out).expect("erro escrevendo saida");
+            println!("primedf-dec: {} bytes", out.len());
+        }
         "cs" => {
             if args.len() < 4 { eprintln!("Uso: main.exe cs [entrada] [saida.gpas]"); return; }
             compress_stream_file_cmd(&args[2], &args[3]);
