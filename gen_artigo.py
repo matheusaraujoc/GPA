@@ -176,7 +176,7 @@ def build():
         [["MQTT / IoT", "MQTTEEB-D [Aqachtoul et al. 2025]", "~76 B"],
          ["AIS / navios", "MarineCadastre [MarineCadastre 2025]", "~100 B"],
          ["Sensores", "Intel Lab Data [Bodik et al. 2004]", "~64 B"],
-         ["Energia", "UCI Household Power [Hebrail and Berard 2012]", "~62 B"],
+         ["Energia", "UCI Household Power [Hébrail and Bérard 2012]", "~62 B"],
          ["GPS", "GeoLife [Zheng et al. 2009]", "~65 B"],
          ["Logs (4 tipos)", "Loghub [Zhu et al. 2023]", "84 a 300 B"],
          ["SMS", "SMS Spam Collection [Almeida et al. 2011]", "~88 B"],

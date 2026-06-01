@@ -620,6 +620,8 @@ def sec_reprod(doc):
       "falha neste projeto. O comando de compilação otimizada é:")
     CODE(doc, "rustc +stable-x86_64-pc-windows-gnu -C opt-level=3 main.rs -o main.exe")
     H(doc, "9.2. Referência de comandos", level=2)
+    P(doc, "A Tabela 1 reúne os comandos da interface de linha de comando do motor.")
+    CAP(doc, "Tabela 1. Comandos da interface de linha de comando.")
     TBL(doc, ["Comando", "Função"],
         [["c entrada saída.gpa", "Comprimir (flag enviesada, perfil automático, nunca inflar)"],
          ["d entrada.gpa saída", "Descomprimir o modo normal"],
@@ -637,17 +639,17 @@ def sec_reprod(doc):
     H(doc, "9.4. Benchmark e footprint", level=2)
     P(doc, "O comando bench cronometra a compressão e a descompressão em memória, sem I/O de "
       "disco, e reporta o pico de heap de cada uma. A saída é uma linha parseável. Os valores "
-      "medidos para uma mensagem típica e para uma entrada de 64 KB estão na Tabela 8 da Seção 11.")
+      "medidos para uma mensagem típica e para uma entrada de 64 KB estão na Tabela 9 da Seção 11.")
 
 def sec_experimento(doc):
     H(doc, "10. Reprodução integral do experimento", level=1)
     P(doc, "Esta seção descreve o experimento com detalhe suficiente para reprodução exata. Todas "
       "as etapas usam sementes fixas e ferramentas de versão conhecida.")
     H(doc, "10.1. Conjuntos de dados e procedência", level=2)
-    P(doc, "São onze fluxos de registros curtos de oito fontes públicas. A Tabela 1 lista a "
+    P(doc, "São onze fluxos de registros curtos de oito fontes públicas. A Tabela 2 lista a "
       "procedência. Cada fonte é tratada como um fluxo com um registro por linha; para o GeoLife, "
       "descartam-se as seis linhas de cabeçalho de cada arquivo de trajetória.")
-    CAP(doc, "Tabela 1. Procedência dos conjuntos de dados.")
+    CAP(doc, "Tabela 2. Procedência dos conjuntos de dados.")
     TBL(doc, ["Domínio", "Fonte", "Origem"],
         [["MQTT", "MQTTEEB-D", "Mendeley Data, DOI 10.17632/jfttfjn6tr"],
          ["AIS", "MarineCadastre AIS", "marinecadastre.gov/accessais (NOAA e BOEM)"],
@@ -704,7 +706,7 @@ def build_dict(heldout):
       "vitórias, a vazão e o uso de memória.")
     P(doc, "Para responder à pergunta sobre a dependência de domínio, executa-se ainda um "
       "experimento cruzado: o primer de um domínio é usado para comprimir as mensagens de teste de "
-      "outro domínio, formando a matriz da Tabela 6. A variante enxuta e o experimento cruzado "
+      "outro domínio, formando a matriz da Tabela 7. A variante enxuta e o experimento cruzado "
       "atendem a uma exigência de rigor: separar o quanto do ganho vem do formato sem cabeçalho do "
       "quanto vem do modelo aquecido, e medir o que ocorre quando o prior não casa com o domínio.")
     H(doc, "10.4. Pré-requisitos", level=2)
@@ -713,7 +715,7 @@ def build_dict(heldout):
       "para os especialistas de string curta; os utilitários zstd, xz, gzip e brotli no caminho de "
       "busca; e o interpretador Python com a biblioteca psutil, opcional, para a medição de memória. "
       "As versões usadas estão no Apêndice D. Os conjuntos de dados, por serem grandes, não "
-      "acompanham o repositório; suas fontes públicas estão na Tabela 1, e a estrutura de pastas "
+      "acompanham o repositório; suas fontes públicas estão na Tabela 2, e a estrutura de pastas "
       "esperada está documentada nas funções de extração do benchmark.py.")
     H(doc, "10.5. Passo a passo da reprodução", level=2)
     P(doc, "A sequência completa, a partir do repositório com os dados em datasets, é a seguinte. "
@@ -765,10 +767,10 @@ def sec_resultados(doc, R, CR=None):
         P(doc, "Resultados a inserir a partir de resultados_reais.json."); return
     meta = R.get("_meta", {}); floor = meta.get("framing_floor_zstd_dict", {})
     H(doc, "11.1. Tamanho comprimido por mensagem", level=2)
-    P(doc, "A Tabela 2 traz o tamanho médio do comprimido, em bytes, por domínio e configuração, "
+    P(doc, "A Tabela 3 traz o tamanho médio do comprimido, em bytes, por domínio e configuração, "
       "incluindo a variante enxuta do dicionário do zstd e os especialistas de string curta. "
       "Valores menores são melhores.")
-    CAP(doc, "Tabela 2. Tamanho médio do comprimido por mensagem, em bytes.")
+    CAP(doc, "Tabela 3. Tamanho médio do comprimido por mensagem, em bytes.")
     headers = ["Domínio", "orig", "GPA frio", "GPA prior", "unishox2", "smaz", "zstd dict", "zstd lean", "brotli"]
     keymap = ["GPA-frio", "GPA-primed", "unishox2", "smaz", "zstd-dict", "zstd-dict-lean", "brotli-11"]
     rows = []; f_dict = []; f_lean = []; f_uni = []
@@ -802,12 +804,12 @@ def sec_resultados(doc, R, CR=None):
           f"pelo prior. Ambas são propriedades legítimas do método, e a decomposição evita atribuir "
           f"ao modelo um ganho que é, em parte, de formato. Reportar as duas comparações é a postura "
           f"honesta diante da pergunta natural sobre por que a diferença é tão grande.")
-        P(doc, "A Tabela 3 decompõe, em bytes médios por mensagem, a vantagem do GPA com prior sobre "
+        P(doc, "A Tabela 4 decompõe, em bytes médios por mensagem, a vantagem do GPA com prior sobre "
           "o dicionário do zstd. A coluna de moldura removível é a soma de verificação e o "
           "identificador de dicionário eliminados pela variante enxuta, da ordem de oito bytes "
           "constantes; a coluna de modelo e formato é o restante, que combina o modelo aquecido pelo "
           "prior e o cabeçalho irredutível do zstd que o formato sem cabeçalho também evita.")
-        CAP(doc, "Tabela 3. Decomposição da vantagem do GPA com prior sobre o zstd-dict (bytes por mensagem).")
+        CAP(doc, "Tabela 4. Decomposição da vantagem do GPA com prior sobre o zstd-dict (bytes por mensagem).")
         drows = []
         for dom, res in domains(R):
             g = res["ratio"].get("GPA-primed"); z = res["ratio"].get("zstd-dict"); zl = res["ratio"].get("zstd-dict-lean")
@@ -816,21 +818,21 @@ def sec_resultados(doc, R, CR=None):
             drows.append([DOM_LABEL.get(dom, dom), virg("%.1f" % total), virg("%.1f" % mold), virg("%.1f" % modelo)])
         TBL(doc, ["Domínio", "Vantagem total", "Moldura removível", "Modelo + formato"], drows, colsize=9.5)
     H(doc, "11.3. Distribuição: mediana e percentil 95", level=2)
-    P(doc, "A vantagem não se deve a poucos casos extremos. A Tabela 4 mostra que, para o GPA com "
+    P(doc, "A vantagem não se deve a poucos casos extremos. A Tabela 5 mostra que, para o GPA com "
       "prior, a mediana e o percentil 95 do tamanho por mensagem ficam próximos da média em todos "
       "os domínios, o que indica uma distribuição concentrada.")
-    CAP(doc, "Tabela 4. GPA com prior: média, mediana e percentil 95 do tamanho (bytes).")
+    CAP(doc, "Tabela 5. GPA com prior: média, mediana e percentil 95 do tamanho (bytes).")
     rows3 = []
     for dom, res in domains(R):
         a = res["ratio"].get("GPA-primed")
         if a: rows3.append([DOM_LABEL.get(dom, dom), virg("%g" % a["mean"]), virg(a.get("median")), virg(a.get("p95"))])
     TBL(doc, ["Domínio", "Média", "Mediana", "P95"], rows3, colsize=10)
     H(doc, "11.4. Expansão e taxa de vitória", level=2)
-    P(doc, "A Tabela 5 mostra a fração de mensagens que cada ferramenta expande e a fração em que "
+    P(doc, "A Tabela 6 mostra a fração de mensagens que cada ferramenta expande e a fração em que "
       "o GPA com prior vence. Ela evidencia o problema que motiva o trabalho, pois no regime de "
       "poucas dezenas de bytes gzip e xz, e o SMAZ em dado estruturado, frequentemente aumentam o "
       "dado.")
-    CAP(doc, "Tabela 5. Vitórias do GPA com prior e mensagens expandidas por outras ferramentas (%).")
+    CAP(doc, "Tabela 6. Vitórias do GPA com prior e mensagens expandidas por outras ferramentas (%).")
     rows4 = []
     for dom, res in domains(R):
         ip = res["inflate_pct"]; wp = res["win_pct"]
@@ -840,13 +842,13 @@ def sec_resultados(doc, R, CR=None):
     TBL(doc, ["Domínio", "GPA prior venc.", "gzip exp.", "xz exp.", "smaz exp.", "unishox2 exp."], rows4, colsize=9)
     H(doc, "11.5. Dependência do prior em relação ao domínio", level=2)
     if CR:
-        P(doc, "A Tabela 6 quantifica o que ocorre quando o prior não casa com o domínio. Cada "
+        P(doc, "A Tabela 7 quantifica o que ocorre quando o prior não casa com o domínio. Cada "
           "célula é o tamanho médio do comprimido ao usar o primer do domínio da coluna para "
           "comprimir as mensagens de teste do domínio da linha. A diagonal, com primer casado, é "
           "sempre a menor; fora dela o tamanho cresce de forma acentuada e pode aproximar-se ou "
           "exceder o tamanho original, o que mostra que o ganho depende criticamente de um prior "
           "compatível com a aplicação.")
-        CAP(doc, "Tabela 6. Tamanho médio (bytes) com primer cruzado: linha é o teste, coluna é o primer.")
+        CAP(doc, "Tabela 7. Tamanho médio (bytes) com primer cruzado: linha é o teste, coluna é o primer.")
         cdoms = list(CR.keys())
         head = ["teste \\ primer"] + [DOM_LABEL.get(d, d).split(" ")[0] for d in cdoms]
         crows = []
@@ -864,12 +866,12 @@ def sec_resultados(doc, R, CR=None):
             if vv.get("mbps") is None: continue
             agg.setdefault(k, {"m": [], "r": []}); agg[k]["m"].append(vv["mbps"])
             if vv.get("rss_mb") is not None: agg[k]["r"].append(vv["rss_mb"])
-    P(doc, "É preciso separar duas medidas distintas de recurso. A Tabela 7 traz a vazão e o pico "
+    P(doc, "É preciso separar duas medidas distintas de recurso. A Tabela 8 traz a vazão e o pico "
       "de memória residente do processo no computador de teste, sobre lotes concatenados. Esse pico "
       "de processo inclui o binário e o sistema operacional e não representa o consumo do algoritmo "
       "embarcado; serve apenas para comparar o uso relativo de recursos entre as ferramentas no "
       "host, onde o GPA já usa muito menos que os compressores de janela longa.")
-    CAP(doc, "Tabela 7. Vazão média e pico de memória do processo no host (não é o footprint embarcado).")
+    CAP(doc, "Tabela 8. Vazão média e pico de memória do processo no host (não é o footprint embarcado).")
     order = ["GPA-frio", "GPA-primed", "gzip-9", "zstd-19", "brotli-11", "xz-9"]
     lbl = {"GPA-frio": "GPA frio", "GPA-primed": "GPA prior", "gzip-9": "gzip-9", "zstd-19": "zstd-19",
            "brotli-11": "brotli-11", "xz-9": "xz-9"}
@@ -883,10 +885,10 @@ def sec_resultados(doc, R, CR=None):
     H(doc, "11.7. Footprint embarcado", level=2)
     P(doc, "O número relevante para microcontroladores não é o pico de processo, mas o conjunto de "
       "trabalho do motor, medido pelo alocador instrumentado e independente do tamanho da mensagem "
-      "no perfil micro. A Tabela 8 reporta esse footprint. A ele soma-se o primer, que ocupa de 16 "
+      "no perfil micro. A Tabela 9 reporta esse footprint. A ele soma-se o primer, que ocupa de 16 "
       "a 32 KB na memória de programa do dispositivo, pois reside no codec e não no arquivo; esse é "
       "um custo honesto a declarar, ainda que não trafegue em cada mensagem.")
-    CAP(doc, "Tabela 8. Footprint de heap do motor (alocador instrumentado), fora o primer.")
+    CAP(doc, "Tabela 9. Footprint de heap do motor (alocador instrumentado), fora o primer.")
     TBL(doc, ["Cenário", "Compressão", "Descompressão"],
         [["Perfil micro (até 4 KB)", "cerca de 51 KB", "cerca de 19 KB"],
          ["Perfil de fluxo (64 KB)", "cerca de 234 KB", "cerca de 130 KB"]], colsize=10)
@@ -916,11 +918,11 @@ def sec_resultados(doc, R, CR=None):
       "ferramentas de uso geral. Esses regimes estão fora do propósito do GPA e são registrados "
       "para evitar leitura indevida dos resultados do nicho.")
     H(doc, "11.10. O trade-off de engenharia", level=2)
-    P(doc, "Os experimentos anteriores estabelecem que o efeito existe, a Tabela 3 mostra de onde "
-      "ele vem, e a Tabela 6 mostra onde ele deixa de valer. Reunidos, eles permitem enquadrar a "
+    P(doc, "Os experimentos anteriores estabelecem que o efeito existe, a Tabela 4 mostra de onde "
+      "ele vem, e a Tabela 7 mostra onde ele deixa de valer. Reunidos, eles permitem enquadrar a "
       "proposta como uma decisão de engenharia, e não apenas como um número de compressão. A "
       "decisão troca um custo fixo por um ganho recorrente. O custo fixo é o primer, de 16 a 32 KB "
-      "na memória de programa do dispositivo (Tabela 8), pago uma única vez na gravação do firmware "
+      "na memória de programa do dispositivo (Tabela 9), pago uma única vez na gravação do firmware "
       "e nunca transmitido. O ganho recorrente é a redução de cerca de duas a três vezes sobre o "
       "dicionário do zstd, ou de cerca de 1,7 vezes quando se isola o modelo do formato, em cada "
       "mensagem enviada.")
@@ -931,20 +933,20 @@ def sec_resultados(doc, R, CR=None):
       "desses dispositivos. E a economia por mensagem se acumula a cada transmissão, de modo que, "
       "em um dispositivo que envia muitas mensagens curtas por enlaces onde cada byte custa energia "
       "e tempo de antena, o investimento fixo é rapidamente compensado. A condição para que o "
-      "trade-off compense é a estabilidade do domínio: o experimento cruzado da Tabela 6 mostra que "
+      "trade-off compense é a estabilidade do domínio: o experimento cruzado da Tabela 7 mostra que "
       "um primer descasado anula o ganho e pode inflar. O método é, assim, indicado quando o "
       "domínio é estável e o volume de mensagens é alto, e contraindicado quando o tráfego é "
       "heterogêneo ou a memória de programa é criticamente escassa. A pergunta útil sobre o "
       "trabalho não é se o ganho é real, e sim em que regimes esse trade-off entre flash, RAM e "
       "compressão se paga.")
-    P(doc, "A Tabela 9 reúne, em um único lugar, os custos do prior, antes dispersos pelo texto, "
+    P(doc, "A Tabela 10 reúne, em um único lugar, os custos do prior, antes dispersos pelo texto, "
       "tornando o trade-off imediatamente visível.")
-    CAP(doc, "Tabela 9. Custos do prior (resumo do trade-off).")
+    CAP(doc, "Tabela 10. Custos do prior (resumo do trade-off).")
     TBL(doc, ["Item", "Valor"],
         [["Primer (memória de programa)", "16 a 32 KB"],
          ["Decodificador (RAM de trabalho)", "cerca de 19 KB"],
          ["Compressor (RAM de trabalho)", "cerca de 51 KB"],
-         ["Degradação com domínio cruzado", "até cerca de 10 vezes (Tabela 6)"]], colsize=10)
+         ["Degradação com domínio cruzado", "até cerca de 10 vezes (Tabela 7)"]], colsize=10)
 
 def sec_embarcado(doc):
     H(doc, "12. Implantação em hardware embarcado", level=1)
@@ -988,14 +990,14 @@ RAM (estatica):
   .data     <globais inicializados>
   .bss      <buffers nao inicializados; o modelo, se alocado estaticamente>""")
     P(doc, "Esses números validam, de forma reproduzível e sem hardware, a parte estática do "
-      "footprint da Tabela 8: que o código e o primer cabem na flash e que as estruturas estáticas "
+      "footprint da Tabela 9: que o código e o primer cabem na flash e que as estruturas estáticas "
       "cabem na RAM. Um projeto que aloque o modelo em vetores estáticos, em vez de no heap, move o "
       "modelo para a seção .bss e torna o footprint completo diretamente visível nessa análise, sem "
-      "depender de medição em tempo de execução. A Tabela 10 resume o que cada método de medição "
+      "depender de medição em tempo de execução. A Tabela 11 resume o que cada método de medição "
       "cobre.")
-    CAP(doc, "Tabela 10. O que cada método de validação de footprint cobre.")
+    CAP(doc, "Tabela 11. O que cada método de validação de footprint cobre.")
     TBL(doc, ["Método", "Onde", "O que mede"],
-        [["Alocador instrumentado (bench)", "PC", "pico de heap dinâmico do motor (Tabela 8)"],
+        [["Alocador instrumentado (bench)", "PC", "pico de heap dinâmico do motor (Tabela 9)"],
          ["idf.py size (compilação cruzada)", "PC", "flash (.text e .rodata, com o primer) e RAM estática (.data e .bss)"],
          ["esp_get_free_heap_size", "dispositivo / QEMU", "heap livre antes e depois, em execução"],
          ["esp_timer_get_time", "dispositivo / QEMU", "latência por mensagem"]],
@@ -1009,10 +1011,10 @@ RAM (estatica):
       "bit a bit contra o motor Rust nos vetores de conformidade e em mensagens reais, em modo normal "
       "e com prior, com doze de doze casos exatos. Compilado para o ESP32 com o ESP-IDF, o relatório "
       "idf.py size-components atribui ao componente do decodificador 19.692 bytes na seção .bss, "
-      "1.811 bytes de código em flash e 220 bytes de constantes, no alvo xtensa real. A Tabela 11 "
+      "1.811 bytes de código em flash e 220 bytes de constantes, no alvo xtensa real. A Tabela 12 "
       "reúne as três medições independentes de RAM do decodificador, que convergem em torno de 19 KB "
-      "e confirmam a linha da Tabela 8 no próprio hardware de destino.")
-    CAP(doc, "Tabela 11. Footprint de RAM do decodificador por três métodos independentes.")
+      "e confirmam a linha da Tabela 9 no próprio hardware de destino.")
+    CAP(doc, "Tabela 12. Footprint de RAM do decodificador por três métodos independentes.")
     TBL(doc, ["Método", "Onde", "RAM do decodificador"],
         [["Alocador instrumentado", "motor Rust (PC)", "19.083 B"],
          ["size no objeto", "C compilado no PC (x86)", "19.776 B"],
@@ -1056,7 +1058,7 @@ idf.py size              # resumo de uso de memoria do firmware inteiro
 idf.py size-components   # contribuicao por componente; ver a linha gpa_decoder""")
     P(doc, "Na medição usada nesta documentação, o componente gpa_decoder apareceu com 19.692 bytes "
       "de .bss, 1.811 bytes de .text em flash e 220 bytes de .rodata, no alvo xtensa, exatamente os "
-      "valores da Tabela 11. Para executar o decoder no emulador, instala-se o QEMU da Espressif e "
+      "valores da Tabela 12. Para executar o decoder no emulador, instala-se o QEMU da Espressif e "
       "roda-se o monitor:")
     CODE(doc,
 """python %IDF_PATH%\\tools\\idf_tools.py install qemu-xtensa   # uma vez; reabrir o terminal depois
