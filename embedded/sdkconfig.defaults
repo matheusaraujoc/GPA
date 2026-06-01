@@ -1,0 +1,5 @@
+# Padroniza a medicao de footprint/latencia do decoder GPA.
+# CPU a 240 MHz (frequencia maxima do ESP32) e otimizacao por tamanho.
+# Obs.: o .bss (modelo, ~19 KB) nao depende da otimizacao; -Os afeta so o .text.
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
