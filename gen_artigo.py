@@ -257,13 +257,16 @@ def build():
         "rígidos de payload, como os doze bytes por quadro do Sigfox ou os tetos de ciclo de trabalho "
         "do LoRaWAN, a redução pode ser a diferença entre caber ou não em um quadro, ou entre "
         "respeitar ou não o limite regulatório.", first=False)
-    body(doc, "Como evidência inicial dessa viabilidade, portamos o decodificador para C sem "
+    body(doc, "Essa viabilidade foi confirmada na prática. Portamos o decodificador para C sem "
         "alocação dinâmica, com todo o estado em memória estática, e o verificamos bit a bit contra "
-        "o motor de referência nos vetores de conformidade e em mensagens reais. A análise estática "
-        "desse binário, pela ferramenta size, reporta cerca de 19 KB na seção de dados não "
-        "inicializados e cerca de 4 KB de código para o decodificador normal, o que confirma a linha "
-        "do decodificador da Tabela 8 por um segundo método, independente do alocador instrumentado. "
-        "Restam para o dispositivo, ou para o emulador, a latência e a energia.", first=False)
+        "o motor de referência nos vetores de conformidade e em mensagens reais. Ao compilá-lo para "
+        "o ESP32 com o ESP-IDF, o relatório de tamanho por componente do idf.py atribui ao "
+        "decodificador 19,7 KB na seção de dados não inicializados e cerca de 1,8 KB de código em "
+        "flash, no alvo xtensa real. O valor de RAM converge com as outras duas medições "
+        "independentes, o alocador instrumentado em Rust e a análise do objeto no hospedeiro, ambas "
+        "em torno de 19 KB, o que confirma a linha do decodificador da Tabela 8 no próprio hardware "
+        "de destino. Restam para o dispositivo físico, ou para o emulador, a latência e a energia.",
+        first=False)
 
     # 8. Conclusao
     section(doc, "8. Conclusão e trabalhos futuros")

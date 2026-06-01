@@ -974,12 +974,21 @@ RAM (estatica):
       "um decodificador de referência em C sem alocação dinâmica, com todo o estado em memória "
       "estática, portado de ghost_core.rs e empacotado como componente ESP-IDF. Ele foi verificado "
       "bit a bit contra o motor Rust nos vetores de conformidade e em mensagens reais, em modo normal "
-      "e com prior, com doze de doze casos exatos. A análise estática desse binário pela ferramenta "
-      "size, equivalente ao que o idf.py size faz no alvo, reporta cerca de 19 KB na seção .bss e "
-      "cerca de 4 KB de código para o decodificador normal, o que confirma a linha do decodificador "
-      "da Tabela 8 por um método independente do alocador instrumentado. O modo com prior, que "
-      "adiciona as tabelas LZ do aquecimento, sobe para cerca de 259 KB de .bss, ainda dentro da RAM "
-      "de um ESP32.")
+      "e com prior, com doze de doze casos exatos. Compilado para o ESP32 com o ESP-IDF, o relatório "
+      "idf.py size-components atribui ao componente do decodificador 19.692 bytes na seção .bss, "
+      "1.811 bytes de código em flash e 220 bytes de constantes, no alvo xtensa real. A Tabela 11 "
+      "reúne as três medições independentes de RAM do decodificador, que convergem em torno de 19 KB "
+      "e confirmam a linha da Tabela 8 no próprio hardware de destino.")
+    CAP(doc, "Tabela 11. Footprint de RAM do decodificador por três métodos independentes.")
+    TBL(doc, ["Método", "Onde", "RAM do decodificador"],
+        [["Alocador instrumentado", "motor Rust (PC)", "19.083 B"],
+         ["size no objeto", "C compilado no PC (x86)", "19.776 B"],
+         ["idf.py size-components", "ESP32 (xtensa)", "19.692 B"]],
+        colsize=10)
+    P(doc, "O modo com prior, que adiciona as tabelas LZ do aquecimento, sobe para cerca de 259 KB "
+      "de memória estática, ainda dentro da RAM de um ESP32. O firmware completo do exemplo, com "
+      "todo o núcleo do ESP-IDF, ocupou cerca de 150 KB, deixando livre a maior parte da partição de "
+      "aplicação.")
     H(doc, "12.4. Energia e airtime", level=2)
     P(doc, "O balanço energético reforça a viabilidade. Em enlaces de baixa potência, a transmissão "
       "de rádio domina o consumo, de modo que gastar alguns microssegundos de processador para "

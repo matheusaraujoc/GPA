@@ -54,6 +54,11 @@ size n.o
 | **Decoder normal** (só o modelo PPM) | ~4,1 KB | **~19,3 KB** |
 | Decoder com prior (`-DGPA_ENABLE_PRIMED`) | ~7,0 KB | ~259 KB |
 
+Medido **no alvo ESP32 real** (após `idf.py build`), o `idf.py size-components` reporta para o
+componente `gpa_decoder`: **`.bss` = 19.692 B**, `.text` (flash) = 1.811 B e `.rodata` = 220 B. As
+três medições independentes do `.bss` convergem: alocador Rust 19.083 B, `size` no objeto x86
+19.776 B, ESP32 xtensa 19.692 B.
+
 O `.bss` do decoder normal, de cerca de **19 KB**, confirma a linha "decodificador ~19 KB" da
 Tabela 8 do artigo, agora por análise estática e não apenas pelo alocador instrumentado. Como o
 design é sem alocação, esse é o footprint completo de RAM em tempo de execução. O modo com prior
