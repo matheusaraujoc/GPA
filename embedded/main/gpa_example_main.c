@@ -1,6 +1,6 @@
-/* gpa_example_main.c - Exemplo ESP-IDF: descomprime uma mensagem embutida com o
- * decoder GPA (no_std, sem alocacao) e reporta tamanho, latencia e heap.
- * A mensagem foi comprimida no PC com: main.exe c entrada saida.gpa
+/* gpa_example_main.c - Exemplo ESP-IDF: descomprime uma mensagem embutida
+ * com o decoder GPA (no_std, sem alocacao) e reporta tamanho, latencia e heap.
+ * Mensagem comprimida no PC com: main.exe c entrada saida.gpa
  */
 #include <stdio.h>
 #include <string.h>
@@ -96,17 +96,12 @@ void app_main(void) {
     int64_t t1 = esp_timer_get_time();
     size_t heap1 = heap_caps_get_free_size(MALLOC_CAP_DEFAULT);
 
-    int ok = (n == (int)sizeof(MSG_ORIG)) && (memcmp(out_buf, MSG_ORIG, n) == 0);
-    printf("GPA decoder: comprimido=%u B -> decodificado=%d B (original=%u B)
-",
+    int ok = (n == (int)sizeof(MSG_ORIG)) && (memcmp(out_buf, MSG_ORIG, (size_t)n) == 0);
+    printf("GPA decoder: comprimido=%u B -> decodificado=%d B (original=%u B)\n",
            (unsigned)sizeof(MSG_GPA), n, (unsigned)sizeof(MSG_ORIG));
-    printf("round-trip: %s
-", ok ? "OK (bit-exato)" : "FALHOU");
-    printf("latencia: %lld us
-", (long long)(t1 - t0));
-    printf("heap livre antes=%u depois=%u (delta dinamico=%d B)
-",
+    printf("round-trip: %s\n", ok ? "OK (bit-exato)" : "FALHOU");
+    printf("latencia: %lld us\n", (long long)(t1 - t0));
+    printf("heap livre antes=%u depois=%u (delta dinamico=%d B)\n",
            (unsigned)heap0, (unsigned)heap1, (int)heap0 - (int)heap1);
-    printf("O footprint estatico (modelo) aparece no .bss; rode idf.py size.
-");
+    printf("Footprint estatico (modelo) no .bss; rode idf.py size-components.\n");
 }
