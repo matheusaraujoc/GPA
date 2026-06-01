@@ -707,23 +707,56 @@ def build_dict(heldout):
       "outro domínio, formando a matriz da Tabela 6. A variante enxuta e o experimento cruzado "
       "atendem a uma exigência de rigor: separar o quanto do ganho vem do formato sem cabeçalho do "
       "quanto vem do modelo aquecido, e medir o que ocorre quando o prior não casa com o domínio.")
-    H(doc, "10.4. Passo a passo da reprodução", level=2)
-    P(doc, "A sequência completa, a partir do repositório com os dados em datasets, é:")
+    H(doc, "10.4. Pré-requisitos", level=2)
+    P(doc, "A reprodução exige um pequeno conjunto de ferramentas, todas verificadas pelo próprio "
+      "benchmark.py antes de iniciar. São elas o compilador Rust com a cadeia GNU; o compilador C, "
+      "para os especialistas de string curta; os utilitários zstd, xz, gzip e brotli no caminho de "
+      "busca; e o interpretador Python com a biblioteca psutil, opcional, para a medição de memória. "
+      "As versões usadas estão no Apêndice D. Os conjuntos de dados, por serem grandes, não "
+      "acompanham o repositório; suas fontes públicas estão na Tabela 1, e a estrutura de pastas "
+      "esperada está documentada nas funções de extração do benchmark.py.")
+    H(doc, "10.5. Passo a passo da reprodução", level=2)
+    P(doc, "A sequência completa, a partir do repositório com os dados em datasets, é a seguinte. "
+      "Os comandos de compilação dos especialistas de string curta usam o gcc; os demais são "
+      "diretos.")
     CODE(doc,
-"""# 1. compilar o motor
+"""# 1. compilar o motor (cadeia GNU; o ligador MSVC falha neste projeto)
 rustc +stable-x86_64-pc-windows-gnu -C opt-level=3 main.rs -o main.exe
-# 2. verificar a corretude
+
+# 2. verificar a corretude (round-trip bit a bit + nunca inflar + tamanhos de referencia)
 main.exe t
-# 3. (opcional) gerar um primer de dominio e recompilar para usar cp/dp
+
+# 3. compilar os baselines Unishox2 e SMAZ (uma vez)
+gcc -O2 -o tools/short/uni_cli.exe  tools/short/uni_cli.c  tools/short/unishox2.c
+gcc -O2 -o tools/short/smaz_cli.exe tools/short/smaz_cli.c tools/short/smaz.c
+
+# 4. (opcional) gerar um primer de dominio e recompilar para usar cp/dp embutido
 python gen_primer.py --from-dataset datasets/.../loop_1.csv --skip-header
 rustc +stable-x86_64-pc-windows-gnu -C opt-level=3 main.rs -o main.exe
-# 4. rodar a validacao em dados reais (gera resultados_reais.json)
-python benchmark.py
-# 5. gerar o artigo e esta documentacao a partir dos resultados
+
+# 5. validacao em dados reais. --quick (minutos) para sanidade; sem flag para o completo (~1 h)
+python benchmark.py --quick
+python benchmark.py            # gera resultados_reais.json e cross_domain.json
+
+# 6. regenerar o artigo e esta documentacao a partir dos resultados
 python gen_artigo.py
 python gen_doc.py""")
     P(doc, "Por usar sementes fixas e ferramentas de versão conhecida, a execução reproduz os "
-      "números das tabelas da Seção 11 dentro da variação esperada de medição de tempo.")
+      "números das tabelas da Seção 11 dentro da variação esperada de medição de tempo. O modo "
+      "--quick grava em arquivos separados, para não sobrescrever os resultados canônicos.")
+    H(doc, "10.6. Decisões metodológicas e seu porquê", level=2)
+    P(doc, "Várias escolhas do protocolo existem para garantir rigor, e convém explicitá-las. A "
+      "medição por mensagem, e não por arquivo inteiro, isola o efeito do prior na partida a frio, "
+      "que é justamente o que o método corrige; medir arquivos diluiria esse efeito. A separação "
+      "held-out, com o primer construído apenas a partir do treino, impede que a avaliação meça "
+      "memorização em vez de generalização. A comparação contra a variante enxuta do zstd separa o "
+      "ganho atribuível ao modelo do ganho atribuível ao formato sem cabeçalho, evitando creditar ao "
+      "modelo uma vantagem que é, em parte, de enquadramento. A inclusão dos especialistas de string "
+      "curta, Unishox2 e SMAZ, situa o método ante seus concorrentes mais diretos no nicho, e não "
+      "apenas ante compressores de uso geral. O experimento cruzado quantifica a dependência de "
+      "domínio, que é a principal ameaça à validade. E o uso de mil mensagens por domínio, com a "
+      "mediana e o percentil 95 além da média, garante que o resultado não reflita poucos casos "
+      "extremos. Cada uma dessas decisões responde a uma pergunta que um avaliador atento faria.")
 
 def sec_resultados(doc, R, CR=None):
     CR = CR or {}
@@ -989,7 +1022,52 @@ RAM (estatica):
       "de memória estática, ainda dentro da RAM de um ESP32. O firmware completo do exemplo, com "
       "todo o núcleo do ESP-IDF, ocupou cerca de 150 KB, deixando livre a maior parte da partição de "
       "aplicação.")
-    H(doc, "12.4. Energia e airtime", level=2)
+    H(doc, "12.4. Verificação de corretude no PC", level=2)
+    P(doc, "Antes de levar o decoder ao dispositivo, convém confirmar no computador que ele "
+      "reproduz exatamente a saída do motor Rust. O repositório traz um driver de teste, "
+      "embedded/test/host_test.c, que lê um arquivo .gpa e o descomprime com o decoder em C. O "
+      "procedimento é compilar o driver com o gcc e, para cada caso, comprimir com o main.exe e "
+      "descomprimir com o binário em C, comparando byte a byte.")
+    CODE(doc,
+"""cd embedded/test
+gcc -O2 -DGPA_ENABLE_PRIMED -I ../components/gpa_decoder/include \\
+    ../components/gpa_decoder/gpa_decoder.c host_test.c -o gpa_host.exe
+
+# modo normal: comprime com o motor Rust, descomprime com o C, compara
+main.exe c   mensagem  m.gpa          &&  gpa_host m.gpa  saida
+# modo com prior: o mesmo primer dos dois lados
+main.exe cpf mensagem  m.gpa primer.bin  &&  gpa_host m.gpa saida primer.bin""")
+    P(doc, "Nos vetores de conformidade e em mensagens reais de diferentes domínios, em modo normal "
+      "e com prior, o decoder em C reproduziu a saída do motor de referência em doze de doze casos, "
+      "bit a bit, incluindo o dado incompressível, em que o modo de armazenamento é exercido. É essa "
+      "equivalência que autoriza usar o binário em C como decoder de produção no dispositivo: o "
+      "formato não tem número de versão, então a compatibilidade entre as duas implementações depende "
+      "da reprodução exata de cada modelo e do codificador, e a suíte de testes é a especificação "
+      "operacional dessa compatibilidade.")
+    H(doc, "12.5. Reprodução no ESP-IDF", level=2)
+    P(doc, "Para medir o footprint no alvo e ver o decoder executar, usa-se o ESP-IDF. No Windows, a "
+      "instalação é feita pelo instalador oficial, que traz o compilador xtensa, o idf.py e um Python "
+      "próprio, e cria um atalho de terminal com o ambiente já ativado. A partir desse terminal, "
+      "dentro de embedded, a medição do footprint é direta e não exige o dispositivo nem o emulador:")
+    CODE(doc,
+"""idf.py set-target esp32
+idf.py build
+idf.py size              # resumo de uso de memoria do firmware inteiro
+idf.py size-components   # contribuicao por componente; ver a linha gpa_decoder""")
+    P(doc, "Na medição usada nesta documentação, o componente gpa_decoder apareceu com 19.692 bytes "
+      "de .bss, 1.811 bytes de .text em flash e 220 bytes de .rodata, no alvo xtensa, exatamente os "
+      "valores da Tabela 11. Para executar o decoder no emulador, instala-se o QEMU da Espressif e "
+      "roda-se o monitor:")
+    CODE(doc,
+"""python %IDF_PATH%\\tools\\idf_tools.py install qemu-xtensa   # uma vez; reabrir o terminal depois
+idf.py qemu monitor      # boot do ESP32 emulado; imprime o app_main; sair com Ctrl+]""")
+    P(doc, "O exemplo descomprime uma mensagem embutida, confere o round-trip bit a bit e imprime a "
+      "latência, por esp_timer_get_time, e o heap livre antes e depois, por heap_caps_get_free_size. "
+      "Como o decoder não aloca dinamicamente, o delta de heap é nulo, e todo o consumo aparece no "
+      ".bss, já visível pelo idf.py size. Convém lembrar que a latência reportada pelo QEMU é "
+      "indicativa, pois o emulador não é fiel ao ciclo do silício; a latência e a energia reais "
+      "exigem a placa física, e ficam como medição futura sem alterar as conclusões de footprint.")
+    H(doc, "12.6. Energia e airtime", level=2)
     P(doc, "O balanço energético reforça a viabilidade. Em enlaces de baixa potência, a transmissão "
       "de rádio domina o consumo, de modo que gastar alguns microssegundos de processador para "
       "reduzir o payload à metade prolonga a autonomia da bateria. Em tecnologias com limites "
@@ -1116,6 +1194,48 @@ def sec_apendices(doc):
       "mesmos tamanhos de referência. Como o formato não tem cabeçalho nem número de versão, a "
       "compatibilidade entre implementações depende da reprodução exata de cada modelo e do "
       "codificador, o que torna a suíte de conformidade a especificação operacional do formato.")
+
+    H(doc, "Apêndice D. Ambiente e versões", level=1)
+    P(doc, "Para reprodução fiel, a Tabela D.1 lista as ferramentas e versões utilizadas. As "
+      "versões dos compressores afetam os tamanhos de saída; as do compilador e do ESP-IDF afetam o "
+      "footprint. As sementes fixas dos scripts tornam os resultados estáveis entre execuções.")
+    CAP(doc, "Tabela D.1. Ferramentas e versões.")
+    TBL(doc, ["Ferramenta", "Versão / configuração", "Uso"],
+        [["Rust (rustc)", "stable, alvo x86_64-pc-windows-gnu", "compilar o motor (o ligador MSVC falha)"],
+         ["gcc", "MinGW-w64 / msys2", "baselines Unishox2 e SMAZ; decoder C no host"],
+         ["zstd", "1.5.7", "baseline, com e sem dicionário; dicionário treinado por --train"],
+         ["xz", "5.6.3", "baseline"],
+         ["gzip", "1.13", "baseline"],
+         ["brotli", "1.1.0", "baseline"],
+         ["Unishox2 / SMAZ", "fonte oficial (compilado)", "especialistas de string curta"],
+         ["Python", "3.11 (psutil; python-docx)", "harness e geração dos documentos"],
+         ["ESP-IDF", "v5.5.4", "compilação para ESP32 e medição de footprint"],
+         ["Toolchain xtensa", "xtensa-esp-elf 14.2.0", "compilador cruzado do ESP-IDF"],
+         ["QEMU", "qemu-xtensa (Espressif)", "execução emulada do firmware"]],
+        colsize=9.5)
+
+    H(doc, "Apêndice E. Resolução de problemas comuns", level=1)
+    P(doc, "Esta seção reúne percalços observados durante a reprodução e suas soluções.")
+    for term, deff in [
+        ("Falha de ligação ao compilar o motor",
+         "o ligador MSVC falha neste projeto; use a cadeia GNU, com rustc +stable-x86_64-pc-windows-gnu."),
+        ("Documentos não regeneram após instalar o ESP-IDF",
+         "o ESP-IDF coloca o seu próprio Python no caminho de busca, e nele a biblioteca python-docx não "
+         "está instalada; invoque os scripts gen_artigo.py e gen_doc.py com o interpretador Python onde o "
+         "python-docx está presente."),
+        ("idf.py qemu acusa qemu-system-xtensa ausente",
+         "instale o emulador da Espressif com python %IDF_PATH%\\tools\\idf_tools.py install qemu-xtensa e "
+         "reabra o terminal do ESP-IDF para que ele entre no caminho de busca."),
+        ("Latência do QEMU diferente do esperado",
+         "o emulador não reproduz o ciclo exato do silício; a latência ali é indicativa. Para latência e "
+         "energia reais, use a placa física."),
+        ("zstd --train recusa por poucas amostras",
+         "treine o dicionário no modo de blocos, com a opção -B sobre um arquivo concatenado, em vez de um "
+         "arquivo por amostra; foi o que o harness adotou."),
+    ]:
+        p = doc.add_paragraph(); p.paragraph_format.space_after = Pt(4)
+        r1 = p.add_run(term + ". "); r1.bold = True; r1.font.name = "Times New Roman"; r1.font.size = Pt(11)
+        r2 = p.add_run(deff); r2.font.name = "Times New Roman"; r2.font.size = Pt(11)
 
 if __name__ == "__main__":
     build()

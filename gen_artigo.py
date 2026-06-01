@@ -188,7 +188,7 @@ def build():
         "brotli nível 11; e o xz nível 9. As versões foram zstd 1.5.7, xz 5.6.3, gzip 1.13, brotli "
         "1.1.0 e Unishox2 da distribuição oficial. As métricas são o tamanho médio, a mediana e o "
         "percentil 95 por mensagem, a fração de mensagens expandidas, a fração de vitórias, a vazão e o "
-        "uso de memória. O procedimento é reproduzível a partir do repositório público (https://github.com/matheusaraujoc/GPA), com sementes fixas; o commit exato e um identificador de versão devem acompanhar a versão final.",
+        "uso de memória. O procedimento é reproduzível a partir do repositório público (https://github.com/matheusaraujoc/GPA), com sementes fixas; o commit exato e um identificador de versão devem acompanhar a versão final. O repositório inclui o script de avaliação reproduzível, com um modo rápido de sanidade, o gerador de primer, e um decodificador de referência em C verificado bit a bit e medido no ESP32; a documentação técnica que acompanha o trabalho traz o guia de reprodução ponta a ponta.",
         first=False)
 
     # 5. Resultados
