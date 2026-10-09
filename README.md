@@ -14,13 +14,15 @@ comprimido carregue qualquer dicionário ou cabeçalho.
 
 | | |
 |---|---|
-| Resultado central | menor arquivo entre todos os concorrentes no nicho; ~1,7× sobre o dicionário enxuto do zstd (modelo isolado), até ~3× sobre o dicionário padrão |
+| Resultado central | menor arquivo em 94% a 100% das mensagens; fator 1,73 sobre o dicionário enxuto do zstd (modelo isolado), 2,12 sobre o dicionário padrão |
 | Garantia | nunca expande a entrada além de ~0,1% (modo de armazenamento) |
-| Footprint | decodificador ~19 KB de RAM, compressor ~51 KB; primer 16–32 KB de flash |
+| Footprint medido no ESP32 | decodificador 19.692 B de RAM e 698 µs/mensagem sem prior; 265,7 KB e 47,7 ms com prior |
 | Integridade | lossless, determinístico, bit a bit exato (suíte de conformidade) |
 
-A análise completa está em **[artigo/](artigo/)** (artigo no padrão SBC e documentação técnica
-detalhada, ambos em `.docx` e `.pdf`).
+O artigo no padrão SBC, em LaTeX, está em **[artigo/latex/](artigo/latex/)**
+([GhostPredict_Prova_de_Conceito.pdf](artigo/latex/GhostPredict_Prova_de_Conceito.pdf)). A documentação técnica detalhada está em
+**[artigo/](artigo/)** em `.docx` e `.pdf`. As medições em hardware estão em
+**[embedded/RESULTADO_ESP32.md](embedded/RESULTADO_ESP32.md)**.
 
 ---
 
@@ -167,7 +169,8 @@ python benchmark.py --no-cross  # pula o experimento cross-domínio
 
 Saídas: `resultados_reais.json` e `cross_domain.json` (o modo `--quick` escreve em
 `resultados_quick.json` para nunca sobrescrever os resultados canônicos). A partir desses JSON,
-`gen_artigo.py` e `gen_doc.py` regeneram o artigo e a documentação.
+`artigo/gen_figs.py` regenera as figuras do artigo e `gen_doc.py` regenera a documentação
+técnica.
 
 ---
 
@@ -229,7 +232,8 @@ prior corrige.
 rustc +stable-x86_64-pc-windows-gnu -C opt-level=3 main.rs -o main.exe   # 1. motor
 main.exe t                                                              # 2. conformidade
 python benchmark.py                                                     # 3. validação (gera JSON)
-python gen_artigo.py && python gen_doc.py                               # 4. artigo e documentação
+python artigo/gen_figs.py && python gen_doc.py                          # 4. figuras e documentação
+cd artigo/latex && pdflatex main && bibtex main && pdflatex main && pdflatex main   # 5. artigo
 ```
 
 Sementes fixas tornam o procedimento reproduzível dentro da variação esperada de medição de tempo.
@@ -268,11 +272,14 @@ Tamanho médio do comprimido por mensagem, com prior casado (1000 mensagens/dom�
 | `gen_primer.py` | Gerador de primer (de dataset, sintético, ou de arquivos) |
 | `app.py` | Interface gráfica (Tkinter) |
 | `benchmark.py` | Validação reproduzível para revisores (gera os JSON) |
-| `gen_artigo.py`, `gen_doc.py` | Geram o artigo e a documentação a partir dos JSON |
+| `artigo/gen_figs.py` | Gera as sete figuras do artigo a partir dos JSON e das medições |
+| `gen_doc.py` | Gera a documentação técnica (`.docx`) a partir dos JSON |
 | `tools/short/` | Unishox2 e SMAZ (fontes + drivers) usados como baselines |
-| `embedded/` | Decoder de referência em C (`no_std`, sem alocação) + projeto ESP-IDF; valida o footprint da Tabela 8 com `idf.py size` |
+| `embedded/` | Decoder de referência em C (`no_std`, sem alocação) + projeto ESP-IDF, firmware de benchmark e o protocolo de teste físico ([TESTE_FISICO.md](embedded/TESTE_FISICO.md)) |
 | `spec.md` | Especificação algorítmica independente de linguagem |
-| `artigo/` | Artigo (SBC) e documentação técnica completa, em `.docx` e `.pdf` |
+| `artigo/latex/` | **Artigo no padrão SBC** (LaTeX + BibTeX), com `GhostPredict_Prova_de_Conceito.pdf` compilado |
+| `artigo/` | Documentação técnica completa (`.docx`, `.pdf`), figuras e gerador |
+| `estudo_blocos/` | Estudo exploratório de contêiner por blocos (linha não incorporada ao artigo) |
 | `RESULTADOS.md` | Síntese de ganhos e limites |
 | `datasets/` | Dados reais da validação (não versionado; ver acima) |
 

@@ -1,0 +1,117 @@
+ets Jun  8 2016 00:22:57
+
+rst:0x1 (POWERON_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+configsip: 0, SPIWP:0xee
+clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+mode:DIO, clock div:2
+load:0x3fff0030,len:6280
+load:0x40078000,len:15836
+ho 0 tail 12 room 4
+load:0x40080400,len:3920
+entry 0x40080644
+I (28) boot: ESP-IDF v5.5.5 2nd stage bootloader
+I (28) boot: compile time Aug  3 2026 16:10:33
+I (28) boot: Multicore bootloader
+I (29) boot: chip revision: v1.1
+I (32) boot.esp32: SPI Speed      : 40MHz
+I (36) boot.esp32: SPI Mode       : DIO
+I (39) boot.esp32: SPI Flash Size : 2MB
+I (43) boot: Enabling RNG early entropy source...
+I (47) boot: Partition Table:
+I (50) boot: ## Label            Usage          Type ST Offset   Length
+I (56) boot:  0 nvs              WiFi data        01 02 00009000 00006000
+I (63) boot:  1 phy_init         RF data          01 01 0000f000 00001000
+I (69) boot:  2 factory          factory app      00 00 00010000 00100000
+I (76) boot: End of partition table
+I (79) esp_image: segment 0: paddr=00010020 vaddr=3f400020 size=0d340h ( 54080) map
+I (105) esp_image: segment 1: paddr=0001d368 vaddr=3ffb0000 size=0263ch (  9788) load
+I (109) esp_image: segment 2: paddr=0001f9ac vaddr=40080000 size=0066ch (  1644) load
+I (110) esp_image: segment 3: paddr=00020020 vaddr=400d0020 size=0ec40h ( 60480) map
+I (137) esp_image: segment 4: paddr=0002ec68 vaddr=4008066c size=0ae7ch ( 44668) load
+I (155) esp_image: segment 5: paddr=00039aec vaddr=50000000 size=00020h (    32) load
+I (161) boot: Loaded app from partition at offset 0x10000
+I (161) boot: Disabling RNG early entropy source...
+I (173) cpu_start: Multicore app
+I (181) cpu_start: GPIO 3 and 1 are used as console UART I/O pins
+I (182) cpu_start: Pro cpu start user code
+I (182) cpu_start: cpu freq: 240000000 Hz
+I (184) app_init: Application information:
+I (187) app_init: Project name:     gpa_decoder_example
+I (192) app_init: App version:      f6edb67-dirty
+I (197) app_init: Compile time:     Aug  3 2026 16:10:04
+I (202) app_init: ELF file SHA256:  ce599f4bf...
+I (206) app_init: ESP-IDF:          v5.5.5
+I (210) efuse_init: Min chip rev:     v0.0
+I (214) efuse_init: Max chip rev:     v3.99 
+I (218) efuse_init: Chip rev:         v1.1
+I (222) heap_init: Initializing. RAM available for dynamic allocation:
+I (228) heap_init: At 3FFAE6E0 len 00001920 (6 KiB): DRAM
+I (233) heap_init: At 3FFBD230 len 00022DD0 (139 KiB): DRAM
+I (238) heap_init: At 3FFE0440 len 00003AE0 (14 KiB): D/IRAM
+I (244) heap_init: At 3FFE4350 len 0001BCB0 (111 KiB): D/IRAM
+I (249) heap_init: At 4008B4E8 len 00014B18 (82 KiB): IRAM
+I (256) spi_flash: detected chip: generic
+I (258) spi_flash: flash io: dio
+W (261) spi_flash: Detected size(16384k) larger than the size in the binary image header(2048k). Using the size in the binary image header.
+I (274) main_task: Started on CPU0
+I (274) main_task: Calling app_main()
+
+============================================================
+ GhostPredict - benchmark do decoder no ESP32
+============================================================
+CPU.............: 240 MHz
+repeticoes/msg..: 200
+primer..........: 16384 B (na flash)
+
+=== MODO FRIO (sem prior) === (200 repeticoes por mensagem)
+msg  orig  .gpa  fator   ok    min    med   media    p95    max   (us)
+---------------------------------------------------------------------
+  0    54    53   1.02x  OK     668    669    674    674    875
+  1    62    52   1.19x  OK     739    740    745    745    755
+  2    62    52   1.19x  OK     733    733    738    739    749
+  3    71    58   1.22x  OK     828    828    834    834    848
+  4    36    30   1.20x  OK     443    444    446    444    455
+  5    62    52   1.19x  OK     734    735    740    740    754
+  6    70    56   1.25x  OK     814    815    820    820    834
+  7    53    51   1.04x  OK     658    658    662    663    677
+  8    36    30   1.20x  OK     448    448    451    453    460
+  9    70    58   1.21x  OK     819    819    825    824    839
+ 10    60    50   1.20x  OK     706    706    711    712    722
+ 11    62    51   1.22x  OK     725    725    730    730    741
+---------------------------------------------------------------------
+mensagens.......: 12 (0 falha(s) de round-trip)
+tamanho medio...: original 58.2 B -> comprimido 49.4 B (fator 1.18x)
+latencia media..: 698 us por mensagem
+vazao equiv.....: 81.4 KB/s de dados reconstruidos
+integridade.....: TODAS bit-exatas
+
+=== MODO COM PRIOR (primed) === (10 repeticoes por mensagem)
+msg  orig  .gpa  fator   ok    min    med   media    p95    max   (us)
+---------------------------------------------------------------------
+  0    54    14   3.86x  OK   47548  47553  47795  49914  49914
+  1    62    12   5.17x  OK   47524  47529  47578  47937  47937
+  2    62    15   4.13x  OK   47571  47576  47630  48046  48046
+  3    71    22   3.23x  OK   47681  47687  47737  48097  48097
+  4    36    20   1.80x  OK   47636  47642  47695  48115  48115
+  5    62    14   4.43x  OK   47543  47549  47601  47986  47986
+  6    70    21   3.33x  OK   47658  47664  47720  48134  48134
+  7    53    14   3.79x  OK   47542  47548  47596  47964  47964
+  8    36    19   1.89x  OK   47619  47624  47679  48098  48098
+  9    70    24   2.92x  OK   47699  47704  47758  48137  48137
+ 10    60    15   4.00x  OK   47556  47562  47618  48045  48045
+ 11    62    13   4.77x  OK   47524  47529  47578  47943  47943
+---------------------------------------------------------------------
+mensagens.......: 12 (0 falha(s) de round-trip)
+tamanho medio...: original 58.2 B -> comprimido 16.9 B (fator 3.44x)
+latencia media..: 47665 us por mensagem
+vazao equiv.....: 1.2 KB/s de dados reconstruidos
+integridade.....: TODAS bit-exatas
+
+=== RECURSOS ===
+heap livre......: 262756 B antes, 65912 B depois (delta 196844 B)
+heap min. hist..: 262756 B antes, 65912 B depois
+folga de pilha..: 2128 B nunca usados na tarefa app_main
+
+O decoder nao aloca: o delta de heap deve ser 0 e todo o consumo
+aparece no .bss estatico. Confirme com: idf.py size-components
+============================================================

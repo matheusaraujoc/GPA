@@ -16,11 +16,20 @@ components/gpa_decoder/
   gpa_decoder.c             implementação no_std, sem alocação
   CMakeLists.txt            componente ESP-IDF
 main/
-  gpa_example_main.c        exemplo: descomprime uma mensagem embutida, mede heap e latência
+  gpa_example_main.c        firmware de benchmark: latência, heap, pilha, integridade
+  gpa_test_vectors.h        vetores held-out (GERADO por tools/gen_vectors.py)
   CMakeLists.txt
-CMakeLists.txt              projeto ESP-IDF
+tools/gen_vectors.py        gera os vetores e o primer a partir de dados reais ou sintéticos
 test/host_test.c            driver de PC para verificar bit-exatidão contra o main.exe (Rust)
+test/vectors_test.c         valida os vetores no PC com o mesmo decoder que vai para a placa
+CMakeLists.txt              projeto ESP-IDF
+TESTE_FISICO.md             protocolo passo a passo para os testes na placa
 ```
+
+Para conduzir os testes com a placa em mãos, siga o **[TESTE_FISICO.md](TESTE_FISICO.md)**.
+Os resultados já medidos em hardware estão em **[RESULTADO_ESP32.md](RESULTADO_ESP32.md)**:
+19,7 KB de RAM e 698 µs por mensagem no modo frio, contra 265 KB e 47,7 ms no modo com prior,
+com round-trip bit-exato nos dois.
 
 ## Corretude (verificada no PC)
 
@@ -80,16 +89,28 @@ idf.py size-components   # detalhamento por componente (mostra o gpa_decoder)
 O `idf.py size` reporta o footprint estático cruzado para o xtensa, validando que o código e os
 dados cabem na flash e na RAM do alvo, **sem precisar da placa física**.
 
-## Rodar na placa (opcional)
+## Rodar na placa
 
 ```sh
-idf.py flash monitor
+python tools/gen_vectors.py     # gera os vetores held-out (uma vez)
+idf.py build
+idf.py -p COM3 flash monitor
 ```
 
-O exemplo (`main/gpa_example_main.c`) descomprime uma mensagem embutida (comprimida no PC com
-`main.exe c`), confere o round-trip bit a bit, e imprime a latência (`esp_timer_get_time`) e o
-heap livre antes e depois (`heap_caps_get_free_size`). Como não há alocação dinâmica, o delta de
-heap é nulo; o consumo aparece todo no `.bss`, visível pelo `idf.py size`.
+O firmware (`main/gpa_example_main.c`) descomprime cada mensagem held-out `REPS` vezes e reporta
+por mensagem a latência (mínimo, mediana, média, p95, máximo via `esp_timer_get_time`), o fator
+de compressão e o round-trip bit a bit; ao final, a vazão equivalente, o delta de heap
+(`heap_caps_get_free_size`) e a folga de pilha (`uxTaskGetStackHighWaterMark`). Como não há
+alocação dinâmica, o delta de heap é nulo e o consumo aparece todo no `.bss`.
+
+O procedimento completo, com os dois experimentos, a planilha de registro e a solução de
+problemas, está em **[TESTE_FISICO.md](TESTE_FISICO.md)**.
+
+> **Custo do modo com prior.** Medido no PC com o mesmo código, uma mensagem custa ~4 µs no modo
+> frio e ~1048 µs no modo com prior. A diferença não é a decodificação: é o **re-aquecimento do
+> modelo com o primer inteiro a cada mensagem**. Aquecer uma vez no boot e restaurar o estado por
+> `memcpy` (~19 KB) deve eliminar esse custo; medir os dois caminhos na placa é um dos objetivos
+> do teste físico.
 
 ## Habilitar o modo com prior
 

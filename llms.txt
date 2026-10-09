@@ -1,0 +1,41 @@
+# GhostPredict (GPA)
+
+> Prova de conceito de compressor sem perdas para micro-payloads de IoT (dezenas de bytes: MQTT, CoAP, LoRaWAN). O formato não tem cabeçalho, o modelo é PPM de ordem 2 sobre nibbles com codificação aritmética inteira, e um prior de domínio (o "primer") fica embutido no codec, não no arquivo. Em onze conjuntos de dados reais, o modo com prior produz o menor arquivo em 94% a 100% das mensagens. Um modo de armazenamento limita a expansão a ~0,1%. O decodificador foi medido em um ESP32: 19,7 KB de RAM e 698 µs por mensagem sem prior; 265,7 KB e 47,7 ms com prior.
+
+Pontos importantes:
+
+- O ganho depende de um primer casado com o domínio; um primer de outro domínio degrada o resultado em até 10,5 vezes.
+- Fora do nicho (arquivos grandes, prosa livre, DNA), o desempenho fica na classe do gzip, atrás de zstd, xz e brotli. A vazão é de ~7 MB/s.
+- O motor de referência é Rust sem dependências; compila com `rustc +stable-x86_64-pc-windows-gnu -C opt-level=3 main.rs -o main.exe` (o toolchain MSVC falha no link).
+- Todas as implementações (Rust, C) devem produzir fluxos bit a bit idênticos; `main.exe t` roda a suíte de conformidade.
+
+## Documentação
+
+- [README](README.md): visão geral, início rápido, manual da CLI, resultados e limites
+- [Especificação algorítmica v12](spec.md): especificação independente de linguagem, suficiente para uma implementação bit-exata
+- [Resultados](RESULTADOS.md): resultados consolidados da avaliação
+
+## Código
+
+- [main.rs](main.rs): CLI do motor (comprimir, descomprimir, modo com prior, testes)
+- [ghost_core.rs](ghost_core.rs): núcleo do codec (LZ77, modelos PPM, codificador aritmético)
+- [gen_primer.py](gen_primer.py): gera o primer de domínio a partir de amostras
+- [benchmark.py](benchmark.py): avaliação reprodutível com sementes fixas; gera `resultados_reais.json` e `cross_domain.json`
+
+## Embarcado (ESP32)
+
+- [embedded/README.md](embedded/README.md): decodificador em C sem alocação dinâmica, componente ESP-IDF
+- [embedded/RESULTADO_ESP32.md](embedded/RESULTADO_ESP32.md): medições de latência e memória no hardware
+- [embedded/TESTE_FISICO.md](embedded/TESTE_FISICO.md): protocolo para reproduzir o teste físico
+
+## Artigo
+
+- [Artigo (PDF)](artigo/latex/GhostPredict_Prova_de_Conceito.pdf): artigo no padrão SBC, "GhostPredict: uma prova de conceito de compressão sem perdas com prior embutido no codec para micro-payloads de IoT"
+- [Fonte LaTeX](artigo/latex/main.tex): fonte do artigo, com as referências em `refs.bib`
+
+## Optional
+
+- [Estudo de contêiner por blocos](estudo_blocos/RESULTADO.md): fragmentação em blocos com e sem prior, comparada com zstd e dicionário
+- [Estudo preliminar](estudo_premiliminar.md): notas exploratórias anteriores ao formato atual
+- [Dados de resultado](resultados_reais.json): números brutos da avaliação principal
+- [Experimento cruzado](cross_domain.json): tamanhos com primer de outro domínio

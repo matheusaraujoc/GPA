@@ -4,6 +4,9 @@
  */
 #include "gpa_decoder.h"
 #include <string.h>
+#ifdef GPA_ENABLE_PRIMED
+#include <stdlib.h>   /* malloc, so no modo com prior (ver LZ_head/LZ_prev) */
+#endif
 
 /* ----------------------------- constantes (== ghost_core.rs) ------------- */
 #define MAX_VALUE 0xFFFFFFFFu
@@ -265,9 +268,29 @@ int gpa_decompress(const uint8_t *in, size_t in_len, uint8_t *out, size_t out_ca
 #define GPA_WORK_SIZE (32768 + 16384)   /* primer (<=32 KB) + mensagem reconstruida */
 #endif
 
-static int32_t LZ_head[LZ_HASH_SIZE];
-static int32_t LZ_prev[LZ_WINDOW];
+/* As tabelas da hash LZ somam 192 KB e NAO cabem no segmento de dados estaticos
+ * do ESP32 classico, limitado a cerca de 176 KB (o link falha com
+ * "region `dram0_0_seg' overflowed"). Elas sao, portanto, alocadas do heap na
+ * primeira chamada e mantidas para as seguintes. E a unica alocacao do decoder,
+ * restrita ao modo com prior: o caminho frio continua 100% estatico, sem malloc,
+ * com os ~19,7 KB do modelo.
+ *
+ * Observacao de projeto: essas tabelas existem so para reparsar o primer e
+ * reaquecer o modelo. Um estado pre-aquecido, calculado fora do dispositivo e
+ * gravado em flash, dispensaria as duas tabelas e o custo de aquecimento. */
+static int32_t *LZ_head = NULL;
+static int32_t *LZ_prev = NULL;
 static uint8_t WORK[GPA_WORK_SIZE];
+
+/* O heap do ESP32 e dividido em regioes; a maior tem cerca de 157 KB. Por isso a
+ * tabela MAIOR (LZ_prev, 128 KB) e alocada primeiro: pedir a menor antes fragmenta
+ * a regiao grande e o segundo pedido falha por falta de bloco contiguo. */
+static int lz_tables_init(void) {
+    if (LZ_head && LZ_prev) return 0;
+    if (!LZ_prev) LZ_prev = (int32_t *)malloc(sizeof(int32_t) * LZ_WINDOW);
+    if (!LZ_head) LZ_head = (int32_t *)malloc(sizeof(int32_t) * LZ_HASH_SIZE);
+    return (LZ_head && LZ_prev) ? 0 : -1;
+}
 
 static size_t lz_hash(const uint8_t *raw, size_t p) {
     size_t h = ((size_t)raw[p] << 16) ^ ((size_t)raw[p + 1] << 8) ^ (size_t)raw[p + 2];
@@ -374,6 +397,7 @@ int gpa_decompress_primed(const uint8_t *in, size_t in_len,
                           uint8_t *out, size_t out_cap) {
     if (in_len == 0) return 0;
     if (primer_len > GPA_WORK_SIZE) return -1;
+    if (lz_tables_init() != 0) return -1;   /* heap insuficiente p/ as tabelas LZ */
     model_init();
     prime_model(primer, primer_len);
     br_init(in, in_len);

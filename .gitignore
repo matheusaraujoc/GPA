@@ -3,11 +3,15 @@
 __pycache__/
 *.pyc
 
-# Artefatos de build Rust (gerados localmente)
+# Artefatos de build Rust (gerados localmente; ver README para compilar)
+main.exe
 main_test.exe
 *.pdb
 *.rcgu.o
 build_old/
+
+# Auxiliares do sistema
+*.lnk
 
 # Outras frentes de pesquisa (fora do escopo do GPA) e dados locais
 cm_*.py
@@ -28,7 +32,27 @@ download_gutenberg.py
 resultados_quick.json
 cross_quick.json
 
-# Saidas de build C / ESP-IDF
+# Saidas de build C / ESP-IDF (sdkconfig.defaults e versionado; sdkconfig e gerado)
 embedded/build/
+embedded/sdkconfig
+embedded/sdkconfig.old
 *.o
 gpa_host.exe
+vectors_test.exe
+vectors_primed.exe
+
+# Estudo de blocos: binario e corpora sao regenerados pelos scripts
+estudo_blocos/block_study.exe
+estudo_blocos/corpus_*.bin
+estudo_blocos/primer_32k.bin
+
+# LaTeX: intermediarios da compilacao (o PDF final e versionado)
+artigo/latex/*.aux
+artigo/latex/*.log
+artigo/latex/*.bbl
+artigo/latex/*.blg
+artigo/latex/*.out
+artigo/latex/*.synctex.gz
+artigo/latex/*.toc
+estudo_preliminar.md
+estudo_blocos
